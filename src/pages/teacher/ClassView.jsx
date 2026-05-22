@@ -8,6 +8,7 @@ import {
 import { db } from '../../firebase'
 import { useAuth } from '../../contexts/AuthContext'
 import IllustrationState from '../../components/IllustrationState'
+import { sanitizeGeneratedText } from '../../utils/contentSanitizer'
 
 const toDateValue = (value) => {
   if (!value) return null
@@ -45,7 +46,7 @@ const lessonPreview = (lesson) => {
   ].find((value) => typeof value === 'string' && value.trim())
 
   if (!candidate) return ''
-  const firstLine = candidate
+  const firstLine = sanitizeGeneratedText(candidate)
     .split('\n')
     .map((line) => line.trim())
     .find(Boolean) || ''

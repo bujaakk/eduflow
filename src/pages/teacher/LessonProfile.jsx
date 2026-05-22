@@ -4,6 +4,7 @@ import { useNavigate, useParams } from 'react-router-dom'
 import { collection, doc, getDoc, getDocs, query, serverTimestamp, updateDoc, where, writeBatch } from 'firebase/firestore'
 import { db } from '../../firebase'
 import IllustrationState from '../../components/IllustrationState'
+import { sanitizeGeneratedText } from '../../utils/contentSanitizer'
 
 const toDateValue = (value) => {
   if (!value) return null
@@ -57,7 +58,7 @@ const normalizeQuizDraft = (items) => {
 
 const pickString = (...values) => {
   const hit = values.find((v) => typeof v === 'string' && v.trim())
-  return hit ? hit.trim() : ''
+  return sanitizeGeneratedText(hit ? hit.trim() : '')
 }
 
 const pickArray = (...values) => {
@@ -106,6 +107,9 @@ export default function LessonProfile() {
   const [summarySaving, setSummarySaving] = useState(false)
   const [summaryInfo, setSummaryInfo] = useState('')
   const [summaryError, setSummaryError] = useState('')
+  const [insightsLoading, setInsightsLoading] = useState(false)
+  const [insightsError, setInsightsError] = useState('')
+  const [selectedInsights, setSelectedInsights] = useState(null)
 
   useEffect(() => {
     if (!lessonId) return
@@ -271,6 +275,11 @@ export default function LessonProfile() {
     return { done, inProgress, locked, total: tasks.length }
   }, [tasks])
 
+  const quizEditLocked = useMemo(
+    () => tasks.some((task) => task.status === 'done' || task.quizStatus === 'completed'),
+    [tasks]
+  )
+
   const studentRows = useMemo(() => {
     const rows = []
     const studentIds = Object.keys(students)
@@ -291,7 +300,7 @@ export default function LessonProfile() {
 
     tasks.forEach((task) => {
       const totalQuestions = task.questions?.length ?? 0
-      const answered = task.answeredCount ?? 0
+      const answered = Math.max(0, Math.min(totalQuestions, Number(task.answeredCount ?? 0)))
       const quizState = task.quizStatus ?? (task.status === 'done' ? 'completed' : task.status || 'required')
       rows.push({
         id: task.id,
@@ -301,12 +310,17 @@ export default function LessonProfile() {
         exercisesUnlocked: Boolean(task.exercisesUnlocked),
         answered,
         totalQuestions,
+        tabLeaveCount: Number(task.tabLeaveCount ?? 0),
       })
     })
     return rows
   }, [tasks, students])
 
   const handleStartQuizEdit = () => {
+    if (quizEditLocked) {
+      setQuizError('Edycja quizu jest zablokowana, ponieważ co najmniej jeden uczeń ukończył już quiz.')
+      return
+    }
     setQuizError('')
     setQuizInfo('')
     setIsQuizEditing(true)
@@ -353,6 +367,10 @@ export default function LessonProfile() {
 
   const handleSaveQuiz = async () => {
     if (!lesson?.id) return
+    if (quizEditLocked) {
+      setQuizError('Edycja quizu jest zablokowana, ponieważ co najmniej jeden uczeń ukończył już quiz.')
+      return
+    }
     const cleanedQuestions = normalizeQuizDraft(quizDraft)
     if (cleanedQuestions.length === 0) {
       setQuizError('Dodaj minimum jedno pytanie quizowe.')
@@ -417,6 +435,82 @@ export default function LessonProfile() {
       setQuizError('Nie udało się zapisać quizu.')
     } finally {
       setQuizSaving(false)
+    }
+  }
+
+  const handleOpenQuizInsights = async (row) => {
+    if (!row?.id || String(row.id).startsWith('fallback-')) return
+
+    setInsightsLoading(true)
+    setInsightsError('')
+    setSelectedInsights(null)
+
+    try {
+      const answersSnap = await getDocs(query(collection(db, 'answers'), where('taskId', '==', row.id)))
+      const attempts = answersSnap.docs
+        .map((answerDoc) => {
+          const data = answerDoc.data() || {}
+          return {
+            id: answerDoc.id,
+            questionIndex: Number(data.questionIndex ?? 0),
+            question: String(data.question || ''),
+            answer: String(data.content || ''),
+            knowledgeLevel: Number(data.knowledgeLevel ?? 0),
+            coverageLevel: Number(data.coverageLevel ?? 0),
+            understandingLevel: Number(data.understandingLevel ?? 0),
+            confidence: Number(data.confidence ?? 0),
+            feedback: String(data.feedback || ''),
+            nextLearningStep: String(data.nextLearningStep || ''),
+            createdAt: data.timestamp || data.evaluatedAt || null,
+          }
+        })
+        .sort((a, b) => {
+          if (a.questionIndex !== b.questionIndex) return a.questionIndex - b.questionIndex
+          const aTime = toDateValue(a.createdAt)?.getTime() ?? 0
+          const bTime = toDateValue(b.createdAt)?.getTime() ?? 0
+          return aTime - bTime
+        })
+
+      const avg = (key) => {
+        if (attempts.length === 0) return 0
+        const total = attempts.reduce((sum, item) => sum + Number(item[key] ?? 0), 0)
+        return Math.round(total / attempts.length)
+      }
+
+      const avgKnowledge = avg('knowledgeLevel')
+      const avgCoverage = avg('coverageLevel')
+      const avgUnderstanding = avg('understandingLevel')
+      const avgConfidence = avg('confidence')
+
+      const statusLabel = avgKnowledge >= 75
+        ? 'Wysoki'
+        : avgKnowledge >= 50
+          ? 'Średni'
+          : 'Niski'
+
+      const recommendedFocus = [...new Set(
+        attempts
+          .map((item) => item.nextLearningStep.trim())
+          .filter(Boolean)
+      )].slice(0, 4)
+
+      setSelectedInsights({
+        taskId: row.id,
+        studentName: students[row.studentId] || row.studentId,
+        attempts,
+        statusLabel,
+        averages: {
+          knowledge: avgKnowledge,
+          coverage: avgCoverage,
+          understanding: avgUnderstanding,
+          confidence: avgConfidence,
+        },
+        recommendedFocus,
+      })
+    } catch {
+      setInsightsError('Nie udało się pobrać podejść do quizu dla tego ucznia.')
+    } finally {
+      setInsightsLoading(false)
     }
   }
 
@@ -507,6 +601,11 @@ export default function LessonProfile() {
 
         <section className="ui-card" style={s.section}>
           <h2 style={s.sectionTitle}>Quiz z lekcji</h2>
+          {quizEditLocked && (
+            <p style={s.lockInfo}>
+              Edycja pytań została zablokowana, bo co najmniej jeden uczeń ukończył już quiz.
+            </p>
+          )}
           {!isQuizEditing && quizQuestions.length === 0 && (
             <p style={s.hint}>Quiz jeszcze nie został wygenerowany.</p>
           )}
@@ -545,13 +644,15 @@ export default function LessonProfile() {
           <div style={s.actionsRow}>
             {!isQuizEditing ? (
               <>
-                <button style={s.primaryBtn} onClick={handleStartQuizEdit}>Edytuj quiz</button>
+                <button style={s.primaryBtn} onClick={handleStartQuizEdit} disabled={quizEditLocked}>Edytuj quiz</button>
                 <button
                   style={s.secondaryBtn}
                   onClick={() => {
+                    if (quizEditLocked) return
                     handleStartQuizEdit()
                     setQuizDraft((prev) => [...prev, ''])
                   }}
+                  disabled={quizEditLocked}
                 >
                   Dodaj pytanie
                 </button>
@@ -583,23 +684,84 @@ export default function LessonProfile() {
                     <th style={s.th}>Quiz</th>
                     <th style={s.th}>Notatka</th>
                     <th style={s.th}>Ćwiczenia</th>
+                    <th style={s.th}>Opuszczenia karty</th>
                     <th style={s.th}>Postęp</th>
+                    <th style={s.th}>Podejścia</th>
                   </tr>
                 </thead>
                 <tbody>
                   {studentRows.map((row) => {
+                    const isFallback = String(row.id).startsWith('fallback-')
                     return (
                       <tr key={row.id}>
                         <td style={s.td}>{students[row.studentId] || row.studentId}</td>
                         <td style={s.td}>{row.quizState === 'completed' ? 'Zaliczony' : row.quizState === 'in_progress' ? 'W trakcie' : 'Wymagany'}</td>
                         <td style={s.td}>{row.noteUnlocked ? 'Odblokowana' : 'Zablokowana'}</td>
                         <td style={s.td}>{row.exercisesUnlocked ? 'Odblokowane' : 'Zablokowane'}</td>
+                        <td style={s.td}>
+                          {row.tabLeaveCount > 0
+                            ? <span style={s.cheatWarn}>⚠ {row.tabLeaveCount}</span>
+                            : <span style={s.cheatOk}>0</span>}
+                        </td>
                         <td style={s.td}>{row.answered}/{row.totalQuestions || '—'}</td>
+                        <td style={s.td}>
+                          <button
+                            style={s.inlineBtn}
+                            onClick={() => handleOpenQuizInsights(row)}
+                            disabled={isFallback || insightsLoading}
+                          >
+                            {insightsLoading && selectedInsights?.taskId === row.id ? 'Ładowanie...' : 'Podgląd'}
+                          </button>
+                        </td>
                       </tr>
                     )
                   })}
                 </tbody>
               </table>
+            </div>
+          )}
+          {insightsError && <p style={s.errorText}>{insightsError}</p>}
+
+          {selectedInsights && (
+            <div style={s.insightsCard}>
+              <div style={s.insightsHeader}>
+                <h3 style={s.insightsTitle}>Status wiedzy: {selectedInsights.studentName}</h3>
+                <button style={s.ghostBtn} onClick={() => setSelectedInsights(null)}>Zamknij</button>
+              </div>
+              <p style={s.insightsSummary}>
+                Poziom wiedzy: <strong>{selectedInsights.statusLabel}</strong> ({selectedInsights.averages.knowledge}%) | Pokrycie: {selectedInsights.averages.coverage}% | Zrozumienie: {selectedInsights.averages.understanding}% | Pewność AI: {selectedInsights.averages.confidence}%
+              </p>
+
+              {selectedInsights.recommendedFocus.length > 0 && (
+                <div style={s.focusWrap}>
+                  <p style={s.focusTitle}>Co uczeń powinien bardziej umieć:</p>
+                  <ul style={s.focusList}>
+                    {selectedInsights.recommendedFocus.map((item) => (
+                      <li key={item} style={s.focusItem}>{item}</li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+
+              <div style={s.attemptsWrap}>
+                <p style={s.focusTitle}>Podejścia do quizu</p>
+                {selectedInsights.attempts.length === 0 ? (
+                  <p style={s.hint}>Brak zapisanych odpowiedzi dla tego quizu.</p>
+                ) : (
+                  <div style={s.attemptsGrid}>
+                    {selectedInsights.attempts.map((attempt) => (
+                      <article key={attempt.id} style={s.attemptCard}>
+                        <p style={s.attemptMeta}>Pytanie {attempt.questionIndex + 1} · {formatDateTime(attempt.createdAt)}</p>
+                        {!!attempt.question && <p style={s.attemptQuestion}><strong>Pytanie:</strong> {attempt.question}</p>}
+                        {!!attempt.answer && <p style={s.attemptAnswer}><strong>Odpowiedź:</strong> {attempt.answer}</p>}
+                        <p style={s.attemptMetrics}>Wiedza: {attempt.knowledgeLevel}% | Pokrycie: {attempt.coverageLevel}% | Zrozumienie: {attempt.understandingLevel}%</p>
+                        {!!attempt.feedback && <p style={s.attemptFeedback}>{attempt.feedback}</p>}
+                        {!!attempt.nextLearningStep && <p style={s.attemptStep}>Następny krok: {attempt.nextLearningStep}</p>}
+                      </article>
+                    ))}
+                  </div>
+                )}
+              </div>
             </div>
           )}
         </section>
@@ -693,6 +855,36 @@ const s = {
   hint: { color: '#64748b', fontSize: 14 },
   errorText: { color: '#b91c1c', fontSize: 13, margin: '10px 0 0' },
   infoText: { color: '#0369a1', fontSize: 13, margin: '10px 0 0' },
+  lockInfo: { margin: '0 0 10px', fontSize: 13, color: '#92400e', background: '#fffbeb', border: '1px solid #fde68a', borderRadius: 10, padding: '8px 10px' },
+  inlineBtn: {
+    border: '1px solid #93c5fd',
+    borderRadius: 8,
+    background: '#eff6ff',
+    color: '#1d4ed8',
+    fontWeight: 700,
+    fontSize: 12,
+    padding: '6px 9px',
+    cursor: 'pointer',
+  },
+  cheatWarn: { color: '#b45309', fontWeight: 700, background: '#fef3c7', border: '1px solid #fde68a', borderRadius: 999, padding: '2px 8px', display: 'inline-block' },
+  cheatOk: { color: '#475569', fontWeight: 600 },
+  insightsCard: { marginTop: 14, border: '1px solid #cbd5e1', background: '#f8fafc', borderRadius: 12, padding: 14 },
+  insightsHeader: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, marginBottom: 8 },
+  insightsTitle: { margin: 0, fontSize: 16, color: '#0f172a', fontWeight: 800 },
+  insightsSummary: { margin: '0 0 10px', color: '#334155', fontSize: 14 },
+  focusWrap: { marginBottom: 12 },
+  focusTitle: { margin: '0 0 6px', color: '#1e293b', fontSize: 13, fontWeight: 700 },
+  focusList: { margin: 0, paddingLeft: 18, display: 'grid', gap: 4 },
+  focusItem: { color: '#334155', fontSize: 13 },
+  attemptsWrap: { marginTop: 8 },
+  attemptsGrid: { display: 'grid', gap: 8 },
+  attemptCard: { border: '1px solid #e2e8f0', borderRadius: 10, padding: 10, background: '#fff' },
+  attemptMeta: { margin: '0 0 6px', color: '#64748b', fontSize: 12, fontWeight: 600 },
+  attemptQuestion: { margin: '0 0 6px', color: '#1e293b', fontSize: 13 },
+  attemptAnswer: { margin: '0 0 6px', color: '#334155', fontSize: 13 },
+  attemptMetrics: { margin: '0 0 6px', color: '#1d4ed8', fontSize: 12, fontWeight: 700 },
+  attemptFeedback: { margin: '0 0 6px', color: '#0f172a', fontSize: 13 },
+  attemptStep: { margin: 0, color: '#0369a1', fontSize: 12, fontWeight: 700 },
   tableWrap: { overflowX: 'auto' },
   table: { width: '100%', borderCollapse: 'collapse' },
   th: { textAlign: 'left', fontSize: 12, fontWeight: 700, color: '#64748b', padding: '8px 10px', borderBottom: '1px solid #e2e8f0', textTransform: 'uppercase', letterSpacing: '.05em' },

@@ -1,12 +1,87 @@
 import Logo from '../../components/Logo'
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
-import { doc, getDoc, addDoc, updateDoc, collection, serverTimestamp, increment } from 'firebase/firestore'
-import { db } from '../../firebase'
+import { doc, getDoc, addDoc, updateDoc, collection, serverTimestamp, onSnapshot, increment } from 'firebase/firestore'
+import { auth, db } from '../../firebase'
 import { useAuth } from '../../contexts/AuthContext'
 import IllustrationState from '../../components/IllustrationState'
 
-const N8N_GRADE_URL = 'WSTAW_URL_WEBHOOKA_MIKOLAJA_OCENIANIE'
+const N8N_GRADE_URL = 'https://n8n.yourwayai.pl/webhook/eduflow-grade'
+
+const normalizeQuestions = (value) => {
+  if (Array.isArray(value)) {
+    return value
+      .map((item) => String(item ?? '').trim())
+      .filter(Boolean)
+  }
+
+  if (typeof value === 'string' && value.trim()) {
+    return value
+      .split(/\r?\n+/)
+      .map((line) => line.replace(/^[-*\d.)\s]+/, '').trim())
+      .filter(Boolean)
+  }
+
+  return []
+}
+
+const pickLessonQuestions = (lessonData) => {
+  if (!lessonData || typeof lessonData !== 'object') return []
+  const candidates = [
+    lessonData.quiz,
+    lessonData.questions,
+    lessonData.quizQuestions,
+    lessonData.generatedQuiz,
+    lessonData.generated?.quiz,
+    lessonData.data?.quiz,
+  ]
+
+  for (const candidate of candidates) {
+    const normalized = normalizeQuestions(candidate)
+    if (normalized.length > 0) return normalized
+  }
+
+  return []
+}
+
+async function submitAnswer(taskId, lessonId, questionIndex, question, answer) {
+  console.log('Wysyłam pytanie:', questionIndex, question, answer)
+
+  const response = await fetch(N8N_GRADE_URL, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      studentId: auth.currentUser.uid,
+      taskId,
+      lessonId,
+      questionIndex,
+      question,
+      answer,
+    }),
+  })
+
+  let payload = null
+  try {
+    payload = await response.json()
+  } catch {
+    payload = { success: false, reason: 'Nieprawidłowa odpowiedź serwera oceniania.' }
+  }
+
+  if (!response.ok && payload?.success !== true) {
+    return {
+      success: false,
+      reason: payload?.reason || payload?.message || `Błąd oceniania (${response.status}).`,
+    }
+  }
+
+  return payload
+}
+
+const getLevelColor = (value) => {
+  if (value < 40) return '#ef4444'
+  if (value <= 70) return '#f59e0b'
+  return '#22c55e'
+}
 
 export default function LessonTasks() {
   const { taskId } = useParams()
@@ -17,106 +92,290 @@ export default function LessonTasks() {
   const [lesson, setLesson] = useState(null)
   const [currentIndex, setCurrentIndex] = useState(0)
   const [answer, setAnswer] = useState('')
-  const [feedback, setFeedback] = useState(null) // { score: 'pass'|'fail', text: '' }
-  const [sending, setSending] = useState(false)
+  const [feedback, setFeedback] = useState('')
+  const [submitError, setSubmitError] = useState('')
+  const [pendingSubmissions, setPendingSubmissions] = useState(0)
+  const [optimisticAnsweredCount, setOptimisticAnsweredCount] = useState(0)
+  const [redirectCountdown, setRedirectCountdown] = useState(5)
   const [loading, setLoading] = useState(true)
+  const [focusWarning, setFocusWarning] = useState('')
+  const lastLeaveEventAtRef = useRef(0)
+  const optimisticAnsweredRef = useRef(0)
+  const initializedIndexRef = useRef(false)
+  const inFlightIndexesRef = useRef(new Set())
+  const submittedIndexesRef = useRef(new Set())
 
   useEffect(() => {
-    const fetch = async () => {
-      const taskSnap = await getDoc(doc(db, 'tasks', taskId))
-      if (!taskSnap.exists()) return
-      const taskData = { id: taskSnap.id, ...taskSnap.data() }
-      setTask(taskData)
-      setCurrentIndex(taskData.answeredCount ?? 0)
-
-      const lessonSnap = await getDoc(doc(db, 'lessons', taskData.lessonId))
-      if (lessonSnap.exists()) setLesson({ id: lessonSnap.id, ...lessonSnap.data() })
-      setLoading(false)
-    }
-    fetch()
+    optimisticAnsweredRef.current = 0
+    initializedIndexRef.current = false
+    inFlightIndexesRef.current = new Set()
+    submittedIndexesRef.current = new Set()
+    setCurrentIndex(0)
+    setAnswer('')
+    setFeedback('')
+    setSubmitError('')
+    setPendingSubmissions(0)
+    setOptimisticAnsweredCount(0)
   }, [taskId])
 
-  const handleSubmit = async () => {
-    if (!answer.trim()) return
-    setSending(true)
-    setFeedback(null)
-
-    try {
-      const question = task.questions[currentIndex]
-
-      // Wywołaj n8n — ocenianie odpowiedzi
-      let aiFeedback = { score: 'pass', text: 'Dobra odpowiedź!' }
-      try {
-        const res = await fetch(N8N_GRADE_URL, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            studentId: user.uid,
-            taskId,
-            lessonId: task.lessonId,
-            questionIndex: currentIndex,
-            question,
-            answer: answer.trim(),
-          }),
-        })
-        const data = await res.json()
-        aiFeedback = { score: data.score, text: data.feedback }
-      } catch {
-        // n8n niedostępne — nie blokuj ucznia, pokaż placeholder
-        aiFeedback = { score: 'pass', text: 'Odpowiedź zapisana. (Feedback AI niedostępny)' }
+  useEffect(() => {
+    const unsub = onSnapshot(doc(db, 'tasks', taskId), (taskSnap) => {
+      if (!taskSnap.exists()) {
+        setTask(null)
+        setLoading(false)
+        return
       }
 
-      // Zapisz odpowiedź do Firestore
+      const taskData = { id: taskSnap.id, ...taskSnap.data() }
+      const taskQuestions = normalizeQuestions(taskData.questions)
+      const normalizedTask = { ...taskData, questions: taskQuestions }
+      setTask(normalizedTask)
+
+      const total = taskQuestions.length
+      const rawAnswered = Number(taskData.answeredCount ?? 0)
+      const answered = Math.max(0, Math.min(total, rawAnswered))
+      const maxIndex = Math.max(total - 1, 0)
+
+      if (rawAnswered > total && total > 0) {
+        updateDoc(doc(db, 'tasks', taskId), { answeredCount: total }).catch(() => {})
+      }
+
+      if (answered > optimisticAnsweredRef.current) {
+        optimisticAnsweredRef.current = answered
+        setOptimisticAnsweredCount(answered)
+      }
+
+      const mergedAnswered = Math.max(answered, optimisticAnsweredRef.current)
+      const mergedIndex = Math.min(Math.max(mergedAnswered, 0), maxIndex)
+      if (!initializedIndexRef.current) {
+        initializedIndexRef.current = true
+        setCurrentIndex(mergedIndex)
+      } else {
+        setCurrentIndex((prev) => Math.max(Math.min(Math.max(prev, 0), maxIndex), mergedIndex))
+      }
+      setLoading(false)
+    })
+
+    return () => unsub()
+  }, [taskId])
+
+  useEffect(() => {
+    const fetchLesson = async () => {
+      if (!task?.lessonId) return
+
+      const lessonSnap = await getDoc(doc(db, 'lessons', task.lessonId))
+      if (!lessonSnap.exists()) return
+
+      const lessonData = { id: lessonSnap.id, ...lessonSnap.data() }
+      setLesson(lessonData)
+    }
+
+    fetchLesson()
+  }, [task?.lessonId])
+
+  const totalQuestions = task?.questions?.length ?? 0
+  const answeredCount = Math.max(0, Math.min(totalQuestions, Number(task?.answeredCount ?? 0)))
+  const effectiveAnsweredCount = Math.max(answeredCount, optimisticAnsweredCount)
+  const isTaskCompleted = task?.quizStatus === 'completed' || task?.status === 'done'
+  const safeIndex = Math.min(Math.max(currentIndex, 0), Math.max(totalQuestions - 1, 0))
+  const currentQuestion = task?.questions?.[safeIndex] ?? ''
+  const progress = totalQuestions > 0 ? Math.round((Math.min(effectiveAnsweredCount, totalQuestions) / totalQuestions) * 100) : 0
+
+  useEffect(() => {
+    if (isTaskCompleted) return undefined
+
+    const handleBeforeUnload = (event) => {
+      event.preventDefault()
+      event.returnValue = ''
+    }
+
+    window.addEventListener('beforeunload', handleBeforeUnload)
+    return () => window.removeEventListener('beforeunload', handleBeforeUnload)
+  }, [isTaskCompleted])
+
+  useEffect(() => {
+    if (!taskId || isTaskCompleted) return undefined
+
+    const reportLeave = async () => {
+      const now = Date.now()
+      if (now - lastLeaveEventAtRef.current < 1200) return
+      lastLeaveEventAtRef.current = now
+      setFocusWarning('Nie opuszczaj karty podczas rozwiązywania quizu. Zdarzenie zostało zapisane dla nauczyciela.')
+
+      try {
+        await updateDoc(doc(db, 'tasks', taskId), {
+          tabLeaveCount: increment(1),
+          lastTabLeaveAt: serverTimestamp(),
+          updatedAt: serverTimestamp(),
+        })
+      } catch {
+        // no-op: warning is still shown locally even if network update fails
+      }
+    }
+
+    const onVisibilityChange = () => {
+      if (document.visibilityState === 'hidden') {
+        reportLeave()
+      }
+    }
+
+    const onBlur = () => {
+      reportLeave()
+    }
+
+    document.addEventListener('visibilitychange', onVisibilityChange)
+    window.addEventListener('blur', onBlur)
+
+    return () => {
+      document.removeEventListener('visibilitychange', onVisibilityChange)
+      window.removeEventListener('blur', onBlur)
+    }
+  }, [taskId, isTaskCompleted, task?.tabLeaveCount])
+
+  useEffect(() => {
+    if (!isTaskCompleted) return undefined
+    setRedirectCountdown(5)
+    const interval = setInterval(() => {
+      setRedirectCountdown((prev) => {
+        if (prev <= 1) {
+          clearInterval(interval)
+          navigate(`/student/note/${taskId}`, { replace: true, state: { justUnlocked: true } })
+          return 0
+        }
+        return prev - 1
+      })
+    }, 1000)
+
+    return () => clearInterval(interval)
+  }, [isTaskCompleted, navigate, taskId])
+
+  const goToLessonNote = () => {
+    navigate(`/student/note/${taskId}`, { state: { justUnlocked: true } })
+  }
+
+  const processSubmissionInBackground = async ({
+    submittedAnswer,
+    submittedIndex,
+    submittedQuestion,
+    lessonId,
+    total,
+  }) => {
+    try {
+      const result = await submitAnswer(taskId, lessonId, submittedIndex, submittedQuestion, submittedAnswer)
+      if (!result?.success) {
+        setSubmitError(result?.reason || `Nie udało się ocenić pytania ${submittedIndex + 1}.`)
+        return
+      }
+
       await addDoc(collection(db, 'answers'), {
         taskId,
         studentId: user.uid,
-        lessonId: task.lessonId,
-        questionIndex: currentIndex,
-        content: answer.trim(),
-        aiScore: aiFeedback.score,
-        feedback: aiFeedback.text,
+        lessonId,
+        questionIndex: submittedIndex,
+        question: submittedQuestion,
+        content: submittedAnswer,
+        knowledgeLevel: Number(result.knowledgeLevel ?? 0),
+        coverageLevel: Number(result.coverageLevel ?? 0),
+        understandingLevel: Number(result.understandingLevel ?? 0),
+        confidence: Number(result.confidence ?? 0),
+        feedback: result.feedback || '',
+        nextLearningStep: result.nextLearningStep || '',
+        evaluatedAt: serverTimestamp(),
         timestamp: serverTimestamp(),
       })
 
-      // Zaktualizuj licznik w tasku
-      const nextIndex = currentIndex + 1
-      const isLast = nextIndex >= task.questions.length
+      const minAnswered = Math.min(total, submittedIndex + 1)
+      const nextAnsweredCount = typeof result.answeredCount === 'number'
+        ? Math.max(minAnswered, Math.max(0, Math.min(total, Number(result.answeredCount))))
+        : minAnswered
+      const completedByProgress = nextAnsweredCount >= total
+      const isCompleted = result.taskCompleted === true || completedByProgress
 
-      await updateDoc(doc(db, 'tasks', taskId), {
-        answeredCount: increment(1),
-        status: isLast ? 'done' : 'in_progress',
-        quizStatus: isLast ? 'completed' : 'in_progress',
-        noteUnlocked: isLast ? true : false,
-        exercisesUnlocked: isLast ? true : false,
-      })
+      const taskPatch = {}
+      taskPatch.answeredCount = nextAnsweredCount
+      if (isCompleted) {
+        taskPatch.status = 'done'
+        taskPatch.quizStatus = 'completed'
+        if (typeof result.noteUnlocked === 'boolean') {
+          taskPatch.noteUnlocked = result.noteUnlocked
+        } else {
+          taskPatch.noteUnlocked = true
+        }
+      } else if (typeof result.answeredCount === 'number') {
+        taskPatch.status = 'in_progress'
+        taskPatch.quizStatus = 'in_progress'
+      }
+      if (!isCompleted && typeof result.noteUnlocked === 'boolean') taskPatch.noteUnlocked = result.noteUnlocked
+      if (typeof result.exercisesUnlocked === 'boolean') taskPatch.exercisesUnlocked = result.exercisesUnlocked
 
-      setFeedback(aiFeedback)
-      setTask(prev => ({
-        ...prev,
-        answeredCount: nextIndex,
-        status: isLast ? 'done' : 'in_progress',
-        quizStatus: isLast ? 'completed' : 'in_progress',
-        noteUnlocked: isLast ? true : false,
-        exercisesUnlocked: isLast ? true : false,
-      }))
+      if (Object.keys(taskPatch).length > 0) {
+        await updateDoc(doc(db, 'tasks', taskId), taskPatch)
+        setTask((prev) => (prev ? { ...prev, ...taskPatch } : prev))
+      }
+
+      optimisticAnsweredRef.current = Math.max(optimisticAnsweredRef.current, nextAnsweredCount)
+      setOptimisticAnsweredCount(optimisticAnsweredRef.current)
+      setFeedback('Odpowiedź oceniona i zapisana.')
+    } catch {
+      setSubmitError(`Nie udało się wysłać pytania ${submittedIndex + 1}. Sprawdź internet i spróbuj ponownie.`)
     } finally {
-      setSending(false)
+      inFlightIndexesRef.current.delete(submittedIndex)
+      setPendingSubmissions((prev) => Math.max(0, prev - 1))
     }
   }
 
-  const handleNext = () => {
-    const nextIndex = currentIndex + 1
-    if (nextIndex >= task.questions.length) {
-      // Wszystkie pytania zaliczone → idź do notatki
-      navigate(`/student/note/${taskId}`)
-    } else {
-      setCurrentIndex(nextIndex)
-      setAnswer('')
-      setFeedback(null)
+  const handleSubmit = () => {
+    if (!answer.trim() || !task || !currentQuestion || isTaskCompleted) return
+
+    const submittedAnswer = answer.trim()
+    const submittedIndex = safeIndex
+    if (inFlightIndexesRef.current.has(submittedIndex) || submittedIndexesRef.current.has(submittedIndex)) return
+    const submittedQuestion = task.questions?.[submittedIndex] ?? ''
+    if (!submittedQuestion) {
+      setSubmitError('Brak pytania do wysłania.')
+      return
     }
+
+    setSubmitError('')
+    setFeedback('Odpowiedź wysłana. Ocenianie trwa w tle.')
+    inFlightIndexesRef.current.add(submittedIndex)
+    submittedIndexesRef.current.add(submittedIndex)
+    setPendingSubmissions((prev) => prev + 1)
+
+    const optimisticNextAnswered = Math.min(totalQuestions, submittedIndex + 1)
+    optimisticAnsweredRef.current = Math.max(optimisticAnsweredRef.current, optimisticNextAnswered)
+    setOptimisticAnsweredCount(optimisticAnsweredRef.current)
+
+    if (optimisticNextAnswered < totalQuestions) {
+      const nextIndex = Math.min(optimisticNextAnswered, Math.max(totalQuestions - 1, 0))
+      setCurrentIndex((prev) => Math.max(prev, nextIndex))
+    }
+
+    setAnswer('')
+
+    void processSubmissionInBackground({
+      submittedAnswer,
+      submittedIndex,
+      submittedQuestion,
+      lessonId: task.lessonId,
+      total: totalQuestions,
+    })
   }
 
-  if (loading) return <div style={s.page}><p style={s.hint}>Ładowanie...</p></div>
+  if (loading) return (
+    <div style={s.page}>
+      <main style={s.main}>
+        <div className="ui-card loading-panel" aria-label="Ładowanie lekcji">
+          <div className="loading-title" />
+          <div className="loading-row">
+            <div className="loading-line w-85" />
+            <div className="loading-line w-70" />
+            <div className="loading-line w-55" />
+          </div>
+        </div>
+      </main>
+    </div>
+  )
   if (!task) return (
     <div style={s.page}>
       <main style={s.main}>
@@ -127,7 +386,7 @@ export default function LessonTasks() {
     </div>
   )
 
-  if ((task.questions?.length ?? 0) === 0) return (
+  if (totalQuestions === 0) return (
     <div style={s.page}>
       <main style={s.main}>
         <div className="ui-card">
@@ -137,66 +396,100 @@ export default function LessonTasks() {
     </div>
   )
 
-  const total = task.questions?.length ?? 0
-  const progress = Math.round(((currentIndex) / total) * 100)
-  const allDone = task.status === 'done' && feedback !== null
+  const currentQuestionNumber = Math.min(safeIndex + 1, totalQuestions)
+  const progressDisplay = isTaskCompleted
+    ? `${totalQuestions}/${totalQuestions}`
+    : `${currentQuestionNumber}/${totalQuestions}`
 
   return (
-    <div style={s.page}>
-      <header style={s.header}>
+    <div className="app-shell">
+      <header className="app-header">
         <button style={s.backBtn} onClick={() => navigate('/student')}>← Wróć</button>
         <Logo height={26} />
-        <span style={s.progressLabel}>Pytanie {Math.min(currentIndex + 1, total)}/{total}</span>
+        <span style={s.progressLabel}>Pytanie {currentQuestionNumber}/{totalQuestions}</span>
       </header>
 
       <main style={s.main}>
-        <h2 style={s.lessonTitle}>{lesson?.title ?? 'Lekcja'}</h2>
-
-        {/* Pasek postępu */}
-        <div style={s.progressBar}>
-          <div style={{ ...s.progressFill, width: `${progress}%` }} />
-        </div>
-
-        <div style={s.card}>
-          <p style={s.questionLabel}>Pytanie {currentIndex + 1}</p>
-          <p style={s.question}>{task.questions?.[currentIndex]}</p>
-
-          {!feedback ? (
-            <>
-              <textarea
-                style={s.textarea}
-                placeholder="Wpisz swoją odpowiedź..."
-                value={answer}
-                onChange={e => setAnswer(e.target.value)}
-                rows={4}
-                disabled={sending}
-              />
-              <button
-                style={{ ...s.btn, opacity: (!answer.trim() || sending) ? 0.5 : 1 }}
-                onClick={handleSubmit}
-                disabled={!answer.trim() || sending}
-              >
-                {sending ? 'Sprawdzanie...' : 'Wyślij odpowiedź'}
-              </button>
-            </>
-          ) : (
-            <div style={{
-              ...s.feedbackBox,
-              borderColor: feedback.score === 'pass' ? '#22c55e' : '#ef4444',
-              background: feedback.score === 'pass' ? '#f0fdf4' : '#fef2f2',
-            }}>
+        {isTaskCompleted ? (
+          <section style={s.finishSection}>
+            <div style={s.finishCard}>
               <IllustrationState
-                type={feedback.score === 'pass' ? 'success' : 'error'}
-                title={feedback.score === 'pass' ? 'Dobrze!' : 'Powtórz odpowiedź'}
-                text={feedback.text}
-                compact
+                type="success"
+                title="Quiz wypełniony"
+                text="Świetna robota. Za chwilę przeniesiemy Cię do strony lekcji z notatką."
               />
-              <button style={s.nextBtn} onClick={handleNext}>
-                {allDone ? '🔓 Odblokuj notatkę' : 'Następne pytanie →'}
-              </button>
+              <p style={s.countdownText}>Przekierowanie za {redirectCountdown} s</p>
+              <button style={s.finishBtn} onClick={goToLessonNote}>Przejdź teraz</button>
             </div>
-          )}
-        </div>
+          </section>
+        ) : (
+          <>
+            <section style={s.heroCard}>
+              <div>
+                <p style={s.eyebrow}>Tryb lekcji</p>
+                <h2 style={s.lessonTitle}>Quiz z lekcji</h2>
+                <p style={s.lessonSubTitle}>{lesson?.title ?? 'Lekcja'}</p>
+                <p style={s.heroHint}>Skup się na odpowiedziach. Po zakończeniu quizu odblokujesz notatkę i dalsze materiały.</p>
+              </div>
+              <div style={s.heroMetaWrap}>
+                <div style={s.heroMetaCard}>
+                  <span style={s.heroMetaLabel}>Postęp</span>
+                  <span style={s.heroMetaValue}>{progressDisplay}</span>
+                </div>
+                <div style={s.heroMetaCard}>
+                  <span style={s.heroMetaLabel}>Ukończenie</span>
+                  <span style={s.heroMetaValue}>{progress}%</span>
+                </div>
+              </div>
+            </section>
+
+            <div style={s.progressBar}>
+              <div style={{ ...s.progressFill, width: `${progress}%` }} />
+            </div>
+
+            <section style={s.layoutGrid}>
+              <article style={s.quizPanel}>
+              <>
+                <div style={s.panelTopRow}>
+                  <span style={s.questionLabel}>Pytanie {currentQuestionNumber}/{totalQuestions}</span>
+                </div>
+
+                <p style={s.question}>{currentQuestion}</p>
+
+                <textarea
+                  style={s.textarea}
+                  placeholder="Wpisz swoją odpowiedź..."
+                  value={answer}
+                  onChange={(e) => setAnswer(e.target.value)}
+                  rows={6}
+                />
+
+                {!!submitError && <p style={s.errorText}>❌ {submitError}</p>}
+                {!!focusWarning && <p style={s.warningText}>⚠ Zdarzenie zostało zapisane dla nauczyciela.</p>}
+                {!!feedback && <p style={s.feedbackSent}>{feedback}</p>}
+                {pendingSubmissions > 0 && (
+                  <p style={s.pendingInfo}>⏳ Trwa ocenianie w tle: {pendingSubmissions}</p>
+                )}
+
+                <button
+                  style={{ ...s.btn, opacity: !answer.trim() ? 0.5 : 1 }}
+                  onClick={handleSubmit}
+                  disabled={!answer.trim()}
+                >
+                  Wyślij odpowiedź
+                </button>
+              </>
+              </article>
+
+              <aside style={s.sidePanel}>
+                <div style={s.guardCard}>
+                  <p style={s.guardTitle}>Tryb bezpieczny</p>
+                  <p style={s.guardHint}>Nie opuszczaj karty podczas rozwiązywania quizu.</p>
+                </div>
+              </aside>
+            </section>
+          </>
+        )}
       </main>
     </div>
   )
@@ -204,20 +497,48 @@ export default function LessonTasks() {
 
 const s = {
   page: { minHeight: '100vh', background: '#f9fafb', fontFamily: 'sans-serif' },
-  header: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '16px 32px', background: '#fff', borderBottom: '1px solid #e5e7eb' },
   backBtn: { background: 'none', border: 'none', color: '#6b7280', cursor: 'pointer', fontSize: 14 },
-  logo: { fontSize: 20, fontWeight: 700, color: '#2563eb' },
   progressLabel: { fontSize: 13, color: '#6b7280' },
-  main: { maxWidth: 680, margin: '0 auto', padding: '32px 24px' },
-  lessonTitle: { fontSize: 20, fontWeight: 600, color: '#111827', marginBottom: 16 },
-  progressBar: { height: 6, background: '#e5e7eb', borderRadius: 4, marginBottom: 28, overflow: 'hidden' },
+  main: { width: 'min(1120px, calc(100% - 32px))', margin: '0 auto', padding: '30px 0 50px' },
+  heroCard: {
+    background: 'linear-gradient(135deg, rgba(37,99,235,.95), rgba(14,116,144,.88))',
+    borderRadius: 24,
+    padding: '24px 26px',
+    color: '#fff',
+    display: 'grid',
+    gridTemplateColumns: '1.5fr 1fr',
+    gap: 18,
+    marginBottom: 14,
+    boxShadow: '0 20px 45px rgba(37,99,235,.22)',
+  },
+  eyebrow: { margin: 0, fontSize: 11, letterSpacing: '.08em', textTransform: 'uppercase', color: 'rgba(255,255,255,.72)', fontWeight: 700 },
+  lessonTitle: { margin: '8px 0 6px', fontSize: 'clamp(26px, 3.8vw, 36px)', lineHeight: 1.08, fontWeight: 800 },
+  lessonSubTitle: { margin: '0 0 6px', color: 'rgba(255,255,255,.82)', fontSize: 14, fontWeight: 600 },
+  heroHint: { margin: 0, color: 'rgba(255,255,255,.84)', fontSize: 14, lineHeight: 1.6, maxWidth: 560 },
+  heroMetaWrap: { display: 'grid', gap: 8, alignContent: 'start' },
+  heroMetaCard: { display: 'grid', gap: 2, background: 'rgba(255,255,255,.14)', border: '1px solid rgba(255,255,255,.24)', borderRadius: 14, padding: '10px 12px' },
+  heroMetaLabel: { fontSize: 11, textTransform: 'uppercase', letterSpacing: '.06em', color: 'rgba(255,255,255,.7)', fontWeight: 700 },
+  heroMetaValue: { fontSize: 20, fontWeight: 800 },
+  progressBar: { height: 8, background: '#dbeafe', borderRadius: 999, marginBottom: 16, overflow: 'hidden' },
   progressFill: { height: '100%', background: '#2563eb', borderRadius: 4, transition: 'width 0.4s' },
-  card: { background: '#fff', border: '1px solid #e5e7eb', borderRadius: 16, padding: '28px' },
-  questionLabel: { fontSize: 11, fontWeight: 600, color: '#9ca3af', textTransform: 'uppercase', letterSpacing: 1, marginBottom: 10 },
-  question: { fontSize: 18, fontWeight: 600, color: '#111827', marginBottom: 20, lineHeight: 1.5 },
-  textarea: { width: '100%', padding: '12px 14px', fontSize: 15, border: '1px solid #d1d5db', borderRadius: 10, outline: 'none', resize: 'vertical', boxSizing: 'border-box', fontFamily: 'sans-serif' },
-  btn: { marginTop: 12, width: '100%', padding: '13px', fontSize: 15, fontWeight: 600, background: '#2563eb', color: '#fff', border: 'none', borderRadius: 10, cursor: 'pointer' },
-  feedbackBox: { marginTop: 16, border: '2px solid', borderRadius: 12, padding: '18px 20px' },
-  nextBtn: { marginTop: 14, background: '#111827', color: '#fff', border: 'none', borderRadius: 8, padding: '10px 20px', cursor: 'pointer', fontWeight: 600, fontSize: 14 },
+  layoutGrid: { display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(290px, 1fr))', gap: 14, alignItems: 'start' },
+  quizPanel: { background: '#ffffff', border: '1px solid #dbeafe', borderRadius: 20, padding: 20, boxShadow: '0 14px 34px rgba(15,23,42,.08)' },
+  sidePanel: { display: 'grid', gap: 12 },
+  panelTopRow: { display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10 },
+  questionLabel: { fontSize: 12, fontWeight: 700, color: '#1d4ed8', textTransform: 'uppercase', letterSpacing: '.05em' },
+  question: { fontSize: 22, fontWeight: 700, color: '#0f172a', marginBottom: 14, lineHeight: 1.42 },
+  textarea: { width: '100%', padding: '13px 14px', fontSize: 15, border: '1px solid #bfdbfe', borderRadius: 12, outline: 'none', resize: 'vertical', boxSizing: 'border-box', fontFamily: 'sans-serif', minHeight: 154, background: '#f8fbff' },
+  btn: { marginTop: 12, width: '100%', padding: '13px', fontSize: 15, fontWeight: 700, background: '#2563eb', color: '#fff', border: 'none', borderRadius: 12, cursor: 'pointer' },
+  errorText: { marginTop: 10, marginBottom: 0, color: '#dc2626', fontSize: 13, fontWeight: 600 },
+  warningText: { marginTop: 8, marginBottom: 0, color: '#92400e', background: '#fef3c7', border: '1px solid #fde68a', borderRadius: 8, fontSize: 13, fontWeight: 600, padding: '8px 10px' },
+  feedbackSent: { marginTop: 8, marginBottom: 0, fontSize: 13, color: '#166534', background: '#dcfce7', border: '1px solid #86efac', borderRadius: 8, padding: '8px 10px', fontWeight: 600 },
+  pendingInfo: { marginTop: 8, marginBottom: 0, fontSize: 13, color: '#1d4ed8', background: '#dbeafe', border: '1px solid #93c5fd', borderRadius: 8, padding: '8px 10px', fontWeight: 700 },
+  guardCard: { background: '#fffbeb', border: '1px solid #fde68a', borderRadius: 14, padding: '12px 14px' },
+  guardTitle: { margin: '0 0 4px', fontSize: 12, fontWeight: 800, textTransform: 'uppercase', letterSpacing: '.06em', color: '#a16207' },
+  guardHint: { margin: 0, fontSize: 13, fontWeight: 600, color: '#92400e', lineHeight: 1.45 },
+  finishSection: { paddingTop: 24 },
+  finishCard: { background: '#ffffff', border: '1px solid #bbf7d0', borderRadius: 20, padding: '26px 20px', boxShadow: '0 16px 32px rgba(16,185,129,.12)', display: 'grid', gap: 12, justifyItems: 'center' },
+  countdownText: { margin: 0, fontSize: 17, fontWeight: 700, color: '#0f172a' },
+  finishBtn: { marginTop: 2, width: 'min(360px, 100%)', padding: '12px 14px', borderRadius: 12, border: 'none', background: '#16a34a', color: '#fff', fontSize: 15, fontWeight: 700, cursor: 'pointer' },
   hint: { color: '#9ca3af', fontSize: 14, padding: 32 },
 }

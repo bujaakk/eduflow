@@ -12,10 +12,12 @@ import {
   updateDoc,
   serverTimestamp,
 } from 'firebase/firestore'
-import { db } from '../../firebase'
+import { getDownloadURL, ref, uploadBytes } from 'firebase/storage'
+import { db, storage } from '../../firebase'
 import { useAuth } from '../../contexts/AuthContext'
 import IllustrationState from '../../components/IllustrationState'
 import { uploadLesson } from '../../services/lessonUpload'
+import { sanitizeGeneratedText } from '../../utils/contentSanitizer'
 
 const MAX_SECONDS = 180 // 3 minuty
 
@@ -36,13 +38,13 @@ const getUploadErrorMessage = (error, fallback) => {
 
 const extractTranscript = (payload) => {
   if (!payload) return ''
-  if (typeof payload === 'string') return payload.trim()
+  if (typeof payload === 'string') return sanitizeGeneratedText(payload)
   if (Array.isArray(payload)) {
     return payload.map((item) => extractTranscript(item)).filter(Boolean).join('\n').trim()
   }
   if (typeof payload === 'object') {
     const direct = payload.transcript || payload.text || payload.result || payload.output
-    if (typeof direct === 'string' && direct.trim()) return direct.trim()
+    if (typeof direct === 'string' && direct.trim()) return sanitizeGeneratedText(direct)
 
     if (Array.isArray(direct) || typeof direct === 'object') {
       const nestedDirect = extractTranscript(direct)
@@ -71,6 +73,8 @@ export default function RecordLesson() {
   const [reviewAudioPath, setReviewAudioPath] = useState('')
   const [reviewAudioBlob, setReviewAudioBlob] = useState(null)
   const [reviewSource, setReviewSource] = useState('desktop')
+  const [desktopRemoteAudioUrl, setDesktopRemoteAudioUrl] = useState('')
+  const [desktopRemoteAudioPath, setDesktopRemoteAudioPath] = useState('')
   const [transcript, setTranscript] = useState('')
   const [isTranscribing, setIsTranscribing] = useState(false)
   const [autoTranscriptAttempted, setAutoTranscriptAttempted] = useState(false)
@@ -135,6 +139,8 @@ export default function RecordLesson() {
         setReviewAudioUrl(URL.createObjectURL(blob))
         setReviewAudioPath('')
         setReviewSource('desktop')
+        setDesktopRemoteAudioUrl('')
+        setDesktopRemoteAudioPath('')
         setTranscript('')
         setTranscriptionError('')
         setTranscriptionInfo('')
@@ -166,6 +172,39 @@ export default function RecordLesson() {
     return blob
   }
 
+  const getAudioExtension = (blob) => {
+    const mime = (blob?.type || '').toLowerCase()
+    if (mime.includes('mpeg') || mime.includes('mp3')) return 'mp3'
+    if (mime.includes('mp4') || mime.includes('m4a') || mime.includes('aac')) return 'm4a'
+    if (mime.includes('ogg')) return 'ogg'
+    if (mime.includes('wav')) return 'wav'
+    return 'webm'
+  }
+
+  const ensureDesktopRemoteAudio = async (blob) => {
+    if (!(blob instanceof Blob) || reviewSource !== 'desktop') {
+      return { remoteAudioUrl: '', remoteStoragePath: '' }
+    }
+
+    if (desktopRemoteAudioUrl) {
+      return {
+        remoteAudioUrl: desktopRemoteAudioUrl,
+        remoteStoragePath: desktopRemoteAudioPath,
+      }
+    }
+
+    const extension = getAudioExtension(blob)
+    const storagePath = `recordings/${user.uid}/${selectedClass}/desktop-${Date.now()}.${extension}`
+    const audioRef = ref(storage, storagePath)
+    await uploadBytes(audioRef, blob, { contentType: blob.type || 'audio/webm' })
+    const audioUrl = await getDownloadURL(audioRef)
+
+    setDesktopRemoteAudioUrl(audioUrl)
+    setDesktopRemoteAudioPath(storagePath)
+
+    return { remoteAudioUrl: audioUrl, remoteStoragePath: storagePath }
+  }
+
   const handleGenerateTranscript = async () => {
     setTranscriptionError('')
     setTranscriptionInfo('')
@@ -174,10 +213,18 @@ export default function RecordLesson() {
       const blob = await resolveReviewBlob()
       if ((!blob && !reviewAudioUrl) || !selectedClass) return
 
+      let remoteAudioUrl = reviewSource === 'mobile_qr' ? reviewAudioUrl : ''
+      let remoteStoragePath = reviewSource === 'mobile_qr' ? reviewAudioPath : ''
+      if (reviewSource === 'desktop' && blob) {
+        const remote = await ensureDesktopRemoteAudio(blob)
+        remoteAudioUrl = remote.remoteAudioUrl
+        remoteStoragePath = remote.remoteStoragePath
+      }
+
       const responsePayload = await uploadLesson(blob, selectedClass, {
         timeoutMs: REQUEST_TIMEOUT_MS,
-        remoteAudioUrl: reviewSource === 'mobile_qr' ? reviewAudioUrl : '',
-        remoteStoragePath: reviewSource === 'mobile_qr' ? reviewAudioPath : '',
+        remoteAudioUrl,
+        remoteStoragePath,
         extraFields: {
           mode: 'transcribe',
           workflowStep: 'transcribe_only',
@@ -221,22 +268,31 @@ export default function RecordLesson() {
 
     try {
       const blob = await resolveReviewBlob()
+      const cleanTranscript = sanitizeGeneratedText(transcript)
       if ((!blob && !reviewAudioUrl) || !selectedClass) {
         setState('idle')
         return
       }
-      if (!transcript.trim()) {
+      if (!cleanTranscript.trim()) {
         alert('Najpierw dodaj transkrypcję (auto lub ręcznie), a potem zatwierdź.')
         setState('idle')
         return
       }
 
+      let remoteAudioUrl = reviewSource === 'mobile_qr' ? reviewAudioUrl : ''
+      let remoteStoragePath = reviewSource === 'mobile_qr' ? reviewAudioPath : ''
+      if (reviewSource === 'desktop' && blob) {
+        const remote = await ensureDesktopRemoteAudio(blob)
+        remoteAudioUrl = remote.remoteAudioUrl
+        remoteStoragePath = remote.remoteStoragePath
+      }
+
       const responsePayload = await uploadLesson(blob, selectedClass, {
         timeoutMs: REQUEST_TIMEOUT_MS,
-        remoteAudioUrl: reviewSource === 'mobile_qr' ? reviewAudioUrl : '',
-        remoteStoragePath: reviewSource === 'mobile_qr' ? reviewAudioPath : '',
+        remoteAudioUrl,
+        remoteStoragePath,
         extraFields: {
-          transcript,
+          transcript: cleanTranscript,
           approvedByTeacher: 'true',
           source: reviewSource,
           mode: 'process',
@@ -282,6 +338,8 @@ export default function RecordLesson() {
         setReviewAudioPath(data.storagePath ?? '')
         setReviewAudioBlob(null)
         setReviewSource('mobile_qr')
+        setDesktopRemoteAudioUrl('')
+        setDesktopRemoteAudioPath('')
         setTranscript('')
         setTranscriptionError('')
         setTranscriptionInfo('')
@@ -311,6 +369,8 @@ export default function RecordLesson() {
       setReviewAudioUrl('')
       setReviewAudioPath('')
       setReviewAudioBlob(null)
+      setDesktopRemoteAudioUrl('')
+      setDesktopRemoteAudioPath('')
       setTranscript('')
       setTranscriptionError('')
       setTranscriptionInfo('')
@@ -340,6 +400,8 @@ export default function RecordLesson() {
     setReviewAudioUrl('')
     setReviewAudioPath('')
     setReviewAudioBlob(null)
+    setDesktopRemoteAudioUrl('')
+    setDesktopRemoteAudioPath('')
     setTranscript('')
     setTranscriptionError('')
     setTranscriptionInfo('')
@@ -448,6 +510,8 @@ export default function RecordLesson() {
                   setReviewAudioUrl('')
                   setReviewAudioPath('')
                   setReviewAudioBlob(null)
+                  setDesktopRemoteAudioUrl('')
+                  setDesktopRemoteAudioPath('')
                   setAudioBlob(null)
                   setTranscript('')
                   setTranscriptionError('')
@@ -467,7 +531,13 @@ export default function RecordLesson() {
 
           {state === 'sending' && (
             <div style={s.statusBox}>
-              <p style={s.statusText}>⏳ Wysyłanie do AI... To może potrwać chwilę.</p>
+              <div style={s.statusLoadingRow}>
+                <span style={s.statusLoader} />
+                <div>
+                  <p style={s.statusTitle}>Przetwarzanie lekcji przez AI</p>
+                  <p style={s.statusText}>Wysyłam nagranie i generuję notatkę oraz quiz. Zajmuje to zwykle kilkanaście sekund.</p>
+                </div>
+              </div>
             </div>
           )}
 
@@ -571,8 +641,11 @@ const s = {
   errorHint: { margin: '0 0 6px', fontSize: 13, color: '#dc2626' },
   retryBtn: { padding: '10px 14px', fontSize: 13, fontWeight: 600, background: '#f8fafc', color: '#0f172a', border: '1px solid #cbd5e1', borderRadius: 10, cursor: 'pointer', marginBottom: 10 },
   btnRow: { display: 'flex', gap: 12 },
-  statusBox: { background: '#f9fafb', border: '1px solid #e5e7eb', borderRadius: 12, padding: '20px', marginTop: 8 },
-  statusText: { fontSize: 15, color: '#374151', marginBottom: 16 },
+  statusBox: { background: 'linear-gradient(135deg, #eff6ff 0%, #f8fafc 100%)', border: '1px solid #bfdbfe', borderRadius: 14, padding: '18px 18px', marginTop: 8 },
+  statusLoadingRow: { display: 'flex', alignItems: 'flex-start', gap: 12 },
+  statusLoader: { width: 14, height: 14, borderRadius: '50%', background: '#2563eb', boxShadow: '0 0 0 4px rgba(37,99,235,0.16)', marginTop: 4, flexShrink: 0 },
+  statusTitle: { margin: '0 0 4px', fontSize: 15, fontWeight: 700, color: '#1e3a8a' },
+  statusText: { margin: 0, fontSize: 13, color: '#1e40af', lineHeight: 1.5 },
   mobileBox: { marginTop: 18, background: '#fff', border: '1px dashed #cbd5e1', borderRadius: 16, padding: 18, textAlign: 'center' },
   mobileTitle: { margin: 0, fontSize: 16, fontWeight: 700, color: '#111827' },
   mobileHint: { margin: '8px 0 14px', fontSize: 13, color: '#6b7280' },

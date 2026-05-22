@@ -236,6 +236,43 @@ button:disabled {
   gap: 12px;
 }
 
+.loading-panel {
+  padding: 18px;
+}
+
+.loading-title {
+  height: 12px;
+  width: 180px;
+  border-radius: 999px;
+  background: linear-gradient(90deg, #e2e8f0 0%, #f1f5f9 45%, #e2e8f0 100%);
+  background-size: 200% 100%;
+  animation: shimmer 1.2s linear infinite;
+}
+
+.loading-row {
+  margin-top: 14px;
+  display: grid;
+  gap: 10px;
+}
+
+.loading-line {
+  height: 10px;
+  border-radius: 999px;
+  background: linear-gradient(90deg, #e2e8f0 0%, #f1f5f9 45%, #e2e8f0 100%);
+  background-size: 200% 100%;
+  animation: shimmer 1.2s linear infinite;
+}
+
+.loading-line.w-40 { width: 40%; }
+.loading-line.w-55 { width: 55%; }
+.loading-line.w-70 { width: 70%; }
+.loading-line.w-85 { width: 85%; }
+
+@keyframes shimmer {
+  0% { background-position: 200% 0; }
+  100% { background-position: -200% 0; }
+}
+
 .ui-card {
   background: rgba(255, 255, 255, .92);
   border: 1px solid rgba(226, 232, 240, .95);

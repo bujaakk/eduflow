@@ -332,7 +332,13 @@ export default function TeacherDashboard() {
         </div>
 
         {loading ? (
-          <div className="ui-card empty-state">Ładowanie klas...</div>
+          <div className="ui-card loading-panel" aria-label="Ładowanie klas">
+            <div className="loading-title" />
+            <div className="loading-row">
+              <div className="loading-line w-85" />
+              <div className="loading-line w-40" />
+            </div>
+          </div>
         ) : classes.length === 0 ? (
           <div className="ui-card">
             <IllustrationState
@@ -378,7 +384,14 @@ export default function TeacherDashboard() {
         {studentError && <div className="ui-card" style={s.errorBox}>{studentError}</div>}
 
         {loading ? (
-          <div className="ui-card empty-state">Ładowanie uczniów...</div>
+          <div className="ui-card loading-panel" aria-label="Ładowanie uczniów">
+            <div className="loading-title" />
+            <div className="loading-row">
+              <div className="loading-line w-85" />
+              <div className="loading-line w-70" />
+              <div className="loading-line w-55" />
+            </div>
+          </div>
         ) : students.length === 0 ? (
           <div className="ui-card">
             <IllustrationState

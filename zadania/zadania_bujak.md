@@ -155,3 +155,24 @@ student_profiles/ {studentId, weaknesses: [], aiRecommendation, lessonsCompleted
 - [x] **Bugfix: kod zaproszenia** — `ClassView` generuje 6-cyfrowy kod i wyświetla go nauczycielowi; wcześniej kod nie był zapisywany do Firestore
 - [x] **Bugfix: uczeń w klasie** — po rejestracji kodem uczeń jest automatycznie dodawany do `classes.studentIds` (`arrayUnion`)
 - [x] **Bugfix: logo** — pliki były PNG z rozszerzeniem `.svg`; zmieniono na `.png` + fallback tekstowy w komponencie
+
+---
+
+## Backlog po testach (maj 2026) — do Bujaka
+
+- [x] **Bezpieczne rozwiązywanie quizów (anti-cheat)** — rejestrowanie opuszczenia karty podczas quizu + komunikat „Nie opuszczaj karty” + widok liczby opuszczeń dla nauczyciela.
+- [ ] **Materiały dodatkowe AI z PDF** — nauczyciel wrzuca PDF do klasy, AI analizuje treść i tworzy notatkę dla ucznia w kategorii „Materiały”.
+- [ ] **Bug mobile QR** — po skanie QR, gdy na telefonie jest już otwarta karta/sesja, czasem pojawia się biały ekran.
+- [x] **Design statusu wysyłki do AI** — odświeżony komunikat i estetyczny blok „Przetwarzanie lekcji przez AI”.
+- [x] **Edycja notatek/opisu przez nauczyciela** — nauczyciel może edytować treść opisu lekcji z poziomu profilu lekcji.
+- [x] **Login: duplikowane logo** — zostaje tylko białe logo po lewej.
+- [ ] **Subdomeny (multi-tenant)** — osobne subdomeny dla szkół/kółek/korepetycji.
+- [ ] **Pierwsze logowanie ucznia (kod/hasło) po refreshu** — nadal zdarzają się przypadki konta aktywnego bez ustawionego hasła; wymaga dalszej stabilizacji flow.
+- [x] **Loading screen po odświeżeniu** — dodać ładny ekran ładowania przy inicjalizacji sesji.
+- [x] **Przejrzystość quizu** — widok numeracji pytań typu „Pytanie 7/9”.
+- [x] **Animacja odblokowania notatki (kłódka)** — efekt odblokowania po ukończeniu quizu.
+- [x] **Nowy interface całej lekcji** — pełny redesign ekranu lekcji.
+- [x] **Blokada edycji quizu przez nauczyciela** — gdy co najmniej jeden uczeń ukończy quiz, edycja pytań powinna być zablokowana.
+- [ ] **Pierwsze logowanie po refreshu pokazuje „Ustaw hasło”, ale konto nadal traktowane jako aktywne** — do dopracowania (to samo źródło co punkt o refreshu).
+- [x] **Ostatnie pytanie quizu** — poprawka: quiz domyka się poprawnie, pytanie znika po zakończeniu.
+- [x] **„Napisy stworzone przez społeczność Amara.org”** — sporadyczny artefakt w treści; zidentyfikować źródło i odfiltrować.

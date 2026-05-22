@@ -14,7 +14,6 @@ import learningGapsImg from '../../assets/metric-learning-gaps.png'
 const toDateValue = (value) => {
   if (!value) return null
   if (typeof value?.toDate === 'function') return value.toDate()
-  if (typeof value?.seconds === 'number') return new Date(value.seconds * 1000)
   if (value instanceof Date) return value
   if (typeof value === 'string' || typeof value === 'number') {
     const parsed = new Date(value)
@@ -131,6 +130,11 @@ export default function StudentDashboard() {
     if (t.lessonId) taskByLessonId[t.lessonId] = t
   })
 
+  const studentFirstName =
+    String(studentData?.firstName || '').trim()
+    || String(user?.displayName || '').trim().split(' ')[0]
+    || 'uczniu'
+
   const fallbackLessons = Object.values(lessons)
   const visibleLessons = classLessons.length > 0 ? classLessons : fallbackLessons
   const numberedLessonIds = [...visibleLessons]
@@ -160,7 +164,7 @@ export default function StudentDashboard() {
         <section className="hero-panel">
           <div>
             <p className="eyebrow">Panel ucznia</p>
-            <h1 className="page-title">Cześć!</h1>
+            <h1 className="page-title">Cześć, {studentFirstName}!</h1>
             <p className="page-subtitle">
               {classData?.name ?? '—'} · {teachers[0]
                 ? `${teachers[0].firstName} ${teachers[0].lastName}`
@@ -198,7 +202,14 @@ export default function StudentDashboard() {
         </div>
 
         {loading ? (
-          <div className="ui-card empty-state">Ładowanie lekcji...</div>
+          <div className="ui-card loading-panel" aria-label="Ładowanie lekcji">
+            <div className="loading-title" />
+            <div className="loading-row">
+              <div className="loading-line w-85" />
+              <div className="loading-line w-55" />
+              <div className="loading-line w-70" />
+            </div>
+          </div>
         ) : visibleLessons.length === 0 ? (
           <div className="ui-card">
             <IllustrationState
@@ -272,7 +283,7 @@ export default function StudentDashboard() {
                   {task?.status === 'in_progress' && (
                     <div className="progress-track">
                       <div className="progress-fill" style={{
-                        width: `${Math.round(((task.answeredCount ?? 0) / (task.questions?.length ?? 1)) * 100)}%`
+                        width: `${Math.min(100, Math.round(((task.answeredCount ?? 0) / (task.questions?.length ?? 1)) * 100))}%`
                       }} />
                     </div>
                   )}

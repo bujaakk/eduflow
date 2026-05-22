@@ -1,5 +1,5 @@
 import Logo from '../components/Logo'
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { ArrowRight, KeyRound, LogIn } from 'lucide-react'
 import { useForm } from 'react-hook-form'
 import { useNavigate } from 'react-router-dom'
@@ -31,6 +31,28 @@ export default function Login() {
   const [pwConfirm, setPwConfirm] = useState('')
   const navigate = useNavigate()
 
+  // Przy każdym wejściu na /login sprawdź czy zalogowany uczeń nie skończył aktywacji.
+  useEffect(() => {
+    const checkIncompleteSetup = async () => {
+      const currentUser = auth.currentUser
+      if (!currentUser) return
+      try {
+        const studentSnap = await getDoc(doc(db, 'students', currentUser.uid))
+        if (studentSnap.exists() && studentSnap.data().passwordSet === false) {
+          setView('setPassword')
+          return
+        }
+        // Użytkownik w pełni aktywny — przekieruj do właściwego panelu.
+        const teacherSnap = await getDoc(doc(db, 'teachers', currentUser.uid))
+        navigate(teacherSnap.exists() ? '/teacher' : '/student', { replace: true })
+      } catch {
+        // Nie blokuj strony logowania przy błędzie sprawdzania.
+      }
+    }
+    checkIncompleteSetup()
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
   const { register, handleSubmit, reset, formState: { errors } } = useForm()
 
   const switchView = (v) => { if (v === 'register') return; setView(v); setError(''); reset() }
@@ -42,7 +64,16 @@ export default function Login() {
     try {
       const credential = await signInWithEmailAndPassword(auth, email, password)
       const teacherDoc = await getDoc(doc(db, 'teachers', credential.user.uid))
-      navigate(teacherDoc.exists() ? '/teacher' : '/student')
+      if (teacherDoc.exists()) {
+        navigate('/teacher')
+        return
+      }
+      const studentDoc = await getDoc(doc(db, 'students', credential.user.uid))
+      if (studentDoc.exists() && studentDoc.data().passwordSet === false) {
+        setView('setPassword')
+        return
+      }
+      navigate('/student')
     } catch (err) {
       setError(getErrorMessage(err.code))
     } finally {
@@ -75,34 +106,35 @@ export default function Login() {
     setError('')
     setLoading(true)
     try {
+      const normalizedEmail = String(email || '').trim().toLowerCase()
+      const normalizedCode = String(code || '').trim()
+
       const q = query(
         collection(db, 'invitations'),
-        where('email', '==', email),
-        where('code', '==', code)
+        where('email', '==', normalizedEmail)
       )
       const snapshot = await getDocs(q)
 
-      if (snapshot.empty) {
+      const invitationDoc = snapshot.docs.find((d) => String(d.data()?.code ?? '').trim() === normalizedCode)
+
+      if (!invitationDoc) {
         setError('Nieprawidłowy email lub kod. Sprawdź wiadomość od nauczyciela.')
-        setLoading(false)
         return
       }
 
-      const invitationDoc = snapshot.docs[0]
       const invitation = invitationDoc.data()
 
       if (invitation.status === 'pending') {
         let credential
         try {
-          credential = await createUserWithEmailAndPassword(auth, email, code)
+          credential = await createUserWithEmailAndPassword(auth, normalizedEmail, normalizedCode)
         } catch (err) {
           // Jeśli konto już istnieje, pozwól wejść kodem tylko gdy hasłem nadal jest kod zaproszenia.
           if (err.code === 'auth/email-already-in-use') {
             try {
-              credential = await signInWithEmailAndPassword(auth, email, code)
+              credential = await signInWithEmailAndPassword(auth, normalizedEmail, normalizedCode)
             } catch {
               setError('To konto jest już aktywne. Zaloguj się swoim własnym hasłem.')
-              setLoading(false)
               return
             }
           } else {
@@ -111,23 +143,32 @@ export default function Login() {
         }
 
         await setDoc(doc(db, 'students', credential.user.uid), {
-          email,
+          email: normalizedEmail,
           firstName: invitation.firstName ?? '',
           lastName: invitation.lastName ?? '',
           teacherId: invitation.teacherId ?? '',
           classId: invitation.classId,
           classIds: invitation.classId ? [invitation.classId] : [],
           joinedAt: serverTimestamp(),
+          passwordSet: false,
         }, { merge: true })
         await setDoc(doc(db, 'student_profiles', credential.user.uid), {
           weaknesses: [],
           errorHistory: [],
           aiRecommendation: '',
         }, { merge: true })
-        // Dodaj ucznia do listy studentów w klasie
-        await updateDoc(doc(db, 'classes', invitation.classId), {
-          studentIds: arrayUnion(credential.user.uid),
-        })
+
+        // Dodaj ucznia do listy studentów w klasie (jeśli klasa istnieje).
+        if (invitation.classId) {
+          try {
+            await updateDoc(doc(db, 'classes', invitation.classId), {
+              studentIds: arrayUnion(credential.user.uid),
+            })
+          } catch {
+            // Nie blokuj aktywacji konta, jeśli klasa została usunięta lub zmieniona.
+          }
+        }
+
         await updateDoc(doc(db, 'invitations', invitationDoc.id), {
           status: 'used',
           studentId: credential.user.uid,
@@ -136,9 +177,17 @@ export default function Login() {
         // Przejdź do ustawienia własnego hasła
         setView('setPassword')
       } else if (invitation.status === 'used') {
-        // Uczeń już ustawił hasło — powinien logować się normalnie
-        setError('To konto jest już aktywne. Zaloguj się swoim własnym hasłem.')
-        setLoading(false)
+        // Konto aktywowane — sprawdź czy uczeń zdążył już zmienić hasło.
+        // Jeśli nie (hasłem nadal jest kod), pozwól dokończyć ustawianie hasła.
+        try {
+          const credential = await signInWithEmailAndPassword(auth, normalizedEmail, normalizedCode)
+          await setDoc(doc(db, 'students', credential.user.uid), { passwordSet: false }, { merge: true })
+          // Zalogowanie kodem powiodło się — hasło nie zostało jeszcze zmienione.
+          setView('setPassword')
+        } catch {
+          // Kod już nie działa jako hasło — uczeń ma własne hasło.
+          setError('To konto jest już aktywne. Zaloguj się swoim własnym hasłem.')
+        }
         return
       } else {
         setError('Zaproszenie wygasło lub jest nieprawidłowe.')
@@ -158,6 +207,12 @@ export default function Login() {
     setLoading(true)
     try {
       await updatePassword(auth.currentUser, pwValue)
+      // Oznacz że hasło zostało już ustawione — zabezpieczenie przed ponownym trafieniem na setPassword.
+      try {
+        await setDoc(doc(db, 'students', auth.currentUser.uid), { passwordSet: true }, { merge: true })
+      } catch {
+        // Nie blokuj nawigacji jeśli zapis się nie udał.
+      }
       navigate('/student')
     } catch (err) {
       setError(getErrorMessage(err.code))
@@ -179,7 +234,6 @@ export default function Login() {
         </section>
 
         <section className="auth-form-panel">
-          <Logo height={36} />
 
       {view === 'login' && (
         <>

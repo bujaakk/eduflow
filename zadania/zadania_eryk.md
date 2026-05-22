@@ -103,6 +103,27 @@ Priorytet: czysto, nowocześnie, edukacyjnie — prosta nawigacja dla nauczyciel
   - Estetyczny, nie przeładowany
 - [x] Ewentualnie: krótkie wideo intro lub animacja (opcjonalne, jeśli zostanie czas)
 
+### Demo — co pokazujemy per rola (do narracji Eryka)
+
+#### 1) Co może robić admin
+- Wejść do panelu `/admin` (hasło demo: `hackaton`).
+- Zarządzać nauczycielami: dodać konto nauczyciela i edytować podstawowe dane.
+- Zarządzać klasami: tworzyć klasy i przypisywać je do nauczyciela.
+- Utrzymać porządek danych przed demem (szybkie poprawki list nauczycieli i klas).
+
+#### 2) Co może robić uczeń
+- Zalogować się kodem zaproszenia (pierwsze wejście) i ustawić własne hasło.
+- Zobaczyć swoją listę lekcji oraz statusy: zablokowana / w trakcie / zaliczona.
+- Rozwiązywać pytania do lekcji i dostać natychmiastowy feedback AI.
+- Odblokować notatkę po wykonaniu zadań i wrócić do niej później.
+- Sprawdzić profil z postępem oraz obszarami do poprawy.
+
+#### 3) Co może robić rodzic (wstępnie)
+- Otrzymywać prosty podgląd postępów dziecka: ile lekcji zaliczone, ile czeka.
+- Widzieć sygnały ryzyka: tematy/problemowe obszary, które wymagają powtórki.
+- Dostawać krótkie rekomendacje „co powtórzyć w domu”.
+- W MVP traktujemy to jako kierunek produktu i narrację roadmapy, nie pełny panel produkcyjny.
+
 ---
 
 ## Eksport do Reacta

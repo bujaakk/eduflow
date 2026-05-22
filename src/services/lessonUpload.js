@@ -81,7 +81,11 @@ export async function uploadLesson(audioBlob, classId, options = {}) {
 
   const formData = new FormData()
   if (hasBlob) {
-    formData.append('data', audioBlob, getAudioFileName(audioBlob))
+    const fileName = getAudioFileName(audioBlob)
+    // Keep backward compatibility with different n8n parsers expecting different field names.
+    formData.append('data', audioBlob, fileName)
+    formData.append('audio', audioBlob, fileName)
+    formData.append('file', audioBlob, fileName)
   }
   if (hasRemoteAudio) {
     formData.append('audioUrl', remoteAudioUrl)

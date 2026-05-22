@@ -161,12 +161,14 @@ export default function StudentProfile() {
                 <tbody>
                   {tasks.map(task => {
                     const lesson = lessonMap[task.lessonId]
+                    const totalQuestions = task.questions?.length ?? 0
+                    const answeredCount = Math.max(0, Math.min(totalQuestions, Number(task.answeredCount ?? 0)))
                     return (
                       <tr key={task.id} style={s.tr}>
                         <td style={s.td}>{lesson?.title ?? task.lessonId}</td>
                         <td style={s.td}>{formatDate(lesson?.timestamp)}</td>
                         <td style={s.td}>
-                          {task.answeredCount ?? 0}/{task.questions?.length ?? '?'}
+                          {answeredCount}/{totalQuestions || '?'}
                         </td>
                         <td style={{ ...s.td, fontWeight: 600, color: statusColor[task.status] }}>
                           {statusLabel[task.status] ?? task.status}
