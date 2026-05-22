@@ -1,0 +1,112 @@
+/* ============================================
+   EDUFLOW — Design Tokens
+   Paleta kolorów + Typografia
+   ============================================ */
+
+:root {
+
+  /* ------------------------------------------
+     PRIMARY — akcje, CTA, linki
+  ------------------------------------------ */
+  --color-primary:          #2563eb;   /* główny niebieski */
+  --color-primary-hover:    #1d4ed8;   /* hover / aktywny */
+  --color-primary-light:    #dbeafe;   /* tło przycisku ghost / badge */
+  --color-primary-foreground: #ffffff; /* tekst na tle primary */
+
+  /* ------------------------------------------
+     SECONDARY — akcent
+  ------------------------------------------ */
+  --color-secondary:          #7c3aed; /* fioletowy akcent */
+  --color-secondary-hover:    #6d28d9;
+  --color-secondary-light:    #ede9fe;
+  --color-secondary-foreground: #ffffff;
+
+  /* ------------------------------------------
+     BACKGROUND — główne + karty
+  ------------------------------------------ */
+  --color-bg:         #f9fafb;  /* tło strony */
+  --color-bg-subtle:  #f3f4f6;  /* sekcje, sidebary */
+  --color-card:       #ffffff;  /* karty / modale */
+  --color-card-border: #e5e7eb; /* obramowanie kart */
+
+  /* ------------------------------------------
+     TEXT — główny + subtelny + disabled
+  ------------------------------------------ */
+  --color-text:          #111827; /* główny tekst */
+  --color-text-subtle:   #6b7280; /* podtytuły, opisy */
+  --color-text-disabled: #d1d5db; /* wyłączone elementy */
+  --color-text-inverse:  #ffffff; /* tekst na ciemnym tle */
+
+  /* ------------------------------------------
+     STATUS — locked / in-progress / done
+  ------------------------------------------ */
+  --color-locked:            #9ca3af; /* 🔒 szary */
+  --color-locked-bg:         #f3f4f6;
+  --color-locked-foreground: #374151;
+
+  --color-in-progress:            #f59e0b; /* ⏳ żółty/pomarańczowy */
+  --color-in-progress-bg:         #fef3c7;
+  --color-in-progress-foreground: #92400e;
+
+  --color-done:            #22c55e; /* ✅ zielony */
+  --color-done-bg:         #dcfce7;
+  --color-done-foreground: #14532d;
+
+  /* ------------------------------------------
+     SEMANTIC — Error / Warning / Success
+  ------------------------------------------ */
+  --color-error:            #dc2626;
+  --color-error-bg:         #fee2e2;
+  --color-error-foreground: #7f1d1d;
+
+  --color-warning:            #f97316;
+  --color-warning-bg:         #ffedd5;
+  --color-warning-foreground: #7c2d12;
+
+  --color-success:            #16a34a;
+  --color-success-bg:         #dcfce7;
+  --color-success-foreground: #14532d;
+
+  /* ------------------------------------------
+     BORDER & SHADOW
+  ------------------------------------------ */
+  --color-border:       #e5e7eb;
+  --color-border-focus: #2563eb;
+  --shadow-sm:  0 1px 2px rgba(0,0,0,.05);
+  --shadow-md:  0 4px 6px rgba(0,0,0,.07);
+  --shadow-lg:  0 10px 15px rgba(0,0,0,.08);
+
+  /* ------------------------------------------
+     TYPOGRAPHY
+  ------------------------------------------ */
+  --font-sans:  'Inter', ui-sans-serif, system-ui, sans-serif;
+  --font-mono:  'JetBrains Mono', ui-monospace, monospace;
+
+  --text-xs:   0.75rem;   /* 12px */
+  --text-sm:   0.875rem;  /* 14px */
+  --text-base: 1rem;      /* 16px */
+  --text-lg:   1.125rem;  /* 18px */
+  --text-xl:   1.25rem;   /* 20px */
+  --text-2xl:  1.5rem;    /* 24px */
+  --text-3xl:  1.875rem;  /* 30px */
+  --text-4xl:  2.25rem;   /* 36px */
+
+  --font-normal:   400;
+  --font-medium:   500;
+  --font-semibold: 600;
+  --font-bold:     700;
+
+  --leading-tight:  1.25;
+  --leading-normal: 1.5;
+  --leading-loose:  1.75;
+
+  /* ------------------------------------------
+     SPACING & RADIUS
+  ------------------------------------------ */
+  --radius-sm: 4px;
+  --radius-md: 8px;
+  --radius-lg: 12px;
+  --radius-xl: 16px;
+  --radius-full: 9999px;
+
+}

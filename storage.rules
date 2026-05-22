@@ -1,0 +1,10 @@
+rules_version = '2';
+service firebase.storage {
+  match /b/{bucket}/o {
+    // Hackathon test mode: allow recordings and app assets for a limited time.
+    // IMPORTANT: tighten these rules before production.
+    match /{allPaths=**} {
+      allow read, write: if request.time < timestamp.date(2026, 7, 1);
+    }
+  }
+}

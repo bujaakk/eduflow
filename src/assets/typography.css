@@ -1,0 +1,136 @@
+/* ============================================
+   EDUFLOW — Typography Tokens
+   Fonty: Inter (body) + Cal Sans / Sora (display)
+   ============================================ */
+
+/* Google Fonts import */
+@import url('https://fonts.googleapis.com/css2?family=Sora:wght@400;500;600;700;800&family=Inter:wght@400;500;600;700&display=swap');
+
+:root {
+
+  /* ------------------------------------------
+     FONT FAMILIES
+  ------------------------------------------ */
+  --font-display: 'Sora', ui-sans-serif, system-ui, sans-serif;  /* tytuły, nagłówki */
+  --font-body:    'Inter', ui-sans-serif, system-ui, sans-serif;  /* treść, labele, przyciski */
+
+  /* ------------------------------------------
+     FONT WEIGHTS
+  ------------------------------------------ */
+  --font-regular:  400;
+  --font-medium:   500;
+  --font-semibold: 600;
+  --font-bold:     700;
+  --font-extrabold: 800;
+
+  /* ------------------------------------------
+     SKALA TYPOGRAFICZNA
+  ------------------------------------------ */
+
+  /* H1 — główny tytuł strony / hero */
+  --text-h1-size:    2.5rem;     /* 40px */
+  --text-h1-line:    1.2;
+  --text-h1-weight:  var(--font-extrabold);
+  --text-h1-font:    var(--font-display);
+  --text-h1-spacing: -0.02em;
+
+  /* H2 — tytuły sekcji */
+  --text-h2-size:    2rem;       /* 32px */
+  --text-h2-line:    1.25;
+  --text-h2-weight:  var(--font-bold);
+  --text-h2-font:    var(--font-display);
+  --text-h2-spacing: -0.015em;
+
+  /* H3 — podtytuły, tytuły kart */
+  --text-h3-size:    1.5rem;     /* 24px */
+  --text-h3-line:    1.35;
+  --text-h3-weight:  var(--font-semibold);
+  --text-h3-font:    var(--font-display);
+  --text-h3-spacing: -0.01em;
+
+  /* Body Large — intro tekst, lead paragraph */
+  --text-body-lg-size:   1.125rem;  /* 18px */
+  --text-body-lg-line:   1.7;
+  --text-body-lg-weight: var(--font-regular);
+  --text-body-lg-font:   var(--font-body);
+  --text-body-lg-spacing: 0;
+
+  /* Body — główna treść, opisy, labele */
+  --text-body-size:   1rem;      /* 16px */
+  --text-body-line:   1.6;
+  --text-body-weight: var(--font-regular);
+  --text-body-font:   var(--font-body);
+  --text-body-spacing: 0;
+
+  /* Small — pomocnicze opisy, meta info */
+  --text-small-size:   0.875rem;  /* 14px */
+  --text-small-line:   1.5;
+  --text-small-weight: var(--font-medium);
+  --text-small-font:   var(--font-body);
+  --text-small-spacing: 0;
+
+  /* Caption — tagi, badge, podpisy, timestamps */
+  --text-caption-size:   0.75rem;  /* 12px */
+  --text-caption-line:   1.4;
+  --text-caption-weight: var(--font-medium);
+  --text-caption-font:   var(--font-body);
+  --text-caption-spacing: 0.02em;  /* lekki letter-spacing dla czytelności */
+
+}
+
+/* ============================================
+   KLASY UŻYTKOWE — gotowe do użycia w HTML
+   ============================================ */
+
+.text-h1 {
+  font-family: var(--text-h1-font);
+  font-size:   var(--text-h1-size);
+  font-weight: var(--text-h1-weight);
+  line-height: var(--text-h1-line);
+  letter-spacing: var(--text-h1-spacing);
+}
+
+.text-h2 {
+  font-family: var(--text-h2-font);
+  font-size:   var(--text-h2-size);
+  font-weight: var(--text-h2-weight);
+  line-height: var(--text-h2-line);
+  letter-spacing: var(--text-h2-spacing);
+}
+
+.text-h3 {
+  font-family: var(--text-h3-font);
+  font-size:   var(--text-h3-size);
+  font-weight: var(--text-h3-weight);
+  line-height: var(--text-h3-line);
+  letter-spacing: var(--text-h3-spacing);
+}
+
+.text-body-lg {
+  font-family: var(--text-body-lg-font);
+  font-size:   var(--text-body-lg-size);
+  font-weight: var(--text-body-lg-weight);
+  line-height: var(--text-body-lg-line);
+}
+
+.text-body {
+  font-family: var(--text-body-font);
+  font-size:   var(--text-body-size);
+  font-weight: var(--text-body-weight);
+  line-height: var(--text-body-line);
+}
+
+.text-small {
+  font-family: var(--text-small-font);
+  font-size:   var(--text-small-size);
+  font-weight: var(--text-small-weight);
+  line-height: var(--text-small-line);
+}
+
+.text-caption {
+  font-family: var(--text-caption-font);
+  font-size:   var(--text-caption-size);
+  font-weight: var(--text-caption-weight);
+  line-height: var(--text-caption-line);
+  letter-spacing: var(--text-caption-spacing);
+}
