@@ -15,9 +15,11 @@ import {
 import { getDownloadURL, ref, uploadBytes } from 'firebase/storage'
 import { db, storage } from '../../firebase'
 import { useAuth } from '../../contexts/AuthContext'
+import { useEnvironment } from '../../contexts/EnvironmentContext'
 import IllustrationState from '../../components/IllustrationState'
 import { uploadLesson } from '../../services/lessonUpload'
 import { sanitizeGeneratedText } from '../../utils/contentSanitizer'
+import { classBelongsToTeacher, classSubjectLabel, classSubjectOptions } from '../../utils/classModel'
 
 const MAX_SECONDS = 180 // 3 minuty
 
@@ -59,11 +61,14 @@ const extractTranscript = (payload) => {
 }
 
 export default function RecordLesson() {
-  const { user } = useAuth()
+  const { user, teacherProfile } = useAuth()
+  const { environmentId, isDefaultEnvironment, buildPath } = useEnvironment()
   const navigate = useNavigate()
+  const isEnvironmentAdmin = teacherProfile?.role === 'environment_admin'
 
   const [classes, setClasses] = useState([])
   const [selectedClass, setSelectedClass] = useState('')
+  const [selectedSubject, setSelectedSubject] = useState('')
   const [state, setState] = useState('idle') // idle | recording | sending | done | error
   const [seconds, setSeconds] = useState(0)
   const [audioBlob, setAudioBlob] = useState(null)
@@ -92,15 +97,38 @@ export default function RecordLesson() {
   useEffect(() => {
     if (!user) return
     const fetchClasses = async () => {
-      const snap = await getDocs(query(collection(db, 'classes'), where('teacherId', '==', user.uid)))
-      const list = snap.docs.map(d => ({ id: d.id, ...d.data() }))
+      const snap = await getDocs(collection(db, 'classes'))
+      const list = snap.docs
+        .map(d => ({ id: d.id, ...d.data() }))
+        .filter((cls) => {
+          const sameEnvironment = (cls.environmentId || 'default') === (isDefaultEnvironment ? 'default' : environmentId)
+          return sameEnvironment && classBelongsToTeacher(cls, user.uid, isEnvironmentAdmin)
+        })
+        .sort((a, b) => String(a.name || '').localeCompare(String(b.name || ''), 'pl'))
       setClasses(list)
-      if (list.length > 0) setSelectedClass(list[0].id)
+      setSelectedClass((current) => {
+        if (current && list.some((cls) => cls.id === current)) return current
+        return list.length > 0 ? list[0].id : ''
+      })
     }
     fetchClasses()
-  }, [user])
+  }, [user, environmentId, isDefaultEnvironment, isEnvironmentAdmin])
 
   const selectedClassMeta = classes.find((cls) => cls.id === selectedClass) || null
+  const subjectOptions = classSubjectOptions(selectedClassMeta, user?.uid, isEnvironmentAdmin)
+  const selectedSubjectName = selectedSubject || subjectOptions[0]?.name || classSubjectLabel(selectedClassMeta, user?.uid)
+
+  useEffect(() => {
+    if (!selectedClassMeta) {
+      setSelectedSubject('')
+      return
+    }
+    const options = classSubjectOptions(selectedClassMeta, user?.uid, isEnvironmentAdmin)
+    setSelectedSubject((current) => {
+      if (current && options.some((option) => option.name === current)) return current
+      return options[0]?.name || ''
+    })
+  }, [selectedClassMeta, user?.uid, isEnvironmentAdmin])
 
   useEffect(() => {
     return () => {
@@ -232,7 +260,8 @@ export default function RecordLesson() {
           executeAutomation: 'false',
           source: reviewSource,
           className: selectedClassMeta?.name ?? '',
-          classSubject: selectedClassMeta?.subject ?? '',
+          classSubject: selectedSubjectName,
+          environmentId,
         },
       })
 
@@ -300,7 +329,8 @@ export default function RecordLesson() {
           waitForApproval: 'false',
           executeAutomation: 'true',
           className: selectedClassMeta?.name ?? '',
-          classSubject: selectedClassMeta?.subject ?? '',
+          classSubject: selectedSubjectName,
+          environmentId,
         },
       })
       if (responsePayload && typeof responsePayload === 'object' && typeof responsePayload.message === 'string' && responsePayload.message.trim()) {
@@ -361,10 +391,11 @@ export default function RecordLesson() {
       const sessionRef = await addDoc(collection(db, 'recordingSessions'), {
         teacherId: user.uid,
         classId: selectedClass,
+        environmentId,
         status: 'waiting',
         createdAt: serverTimestamp(),
       })
-      const url = `${window.location.origin}/teacher/record/mobile?session=${sessionRef.id}`
+      const url = `${window.location.origin}${buildPath('/teacher/record/mobile')}?session=${sessionRef.id}`
       setMobileSession({ id: sessionRef.id, url, status: 'waiting', error: '' })
       setReviewAudioUrl('')
       setReviewAudioPath('')
@@ -416,7 +447,7 @@ export default function RecordLesson() {
   return (
     <div style={s.page}>
       <header style={s.header}>
-        <button style={s.backBtn} onClick={() => navigate('/teacher')}>← Wróć</button>
+        <button style={s.backBtn} onClick={() => navigate(buildPath('/teacher'))}>← Wróć</button>
         <Logo height={26} />
       </header>
 
@@ -442,8 +473,26 @@ export default function RecordLesson() {
             disabled={state === 'recording' || state === 'sending'}
           >
             {classes.map(c => (
-              <option key={c.id} value={c.id}>{c.name} — {c.subject}</option>
+              <option key={c.id} value={c.id}>{c.name} — {classSubjectLabel(c, user?.uid)}</option>
             ))}
+          </select>
+        </div>
+
+        <div style={s.row}>
+          <label style={s.label}>Przedmiot</label>
+          <select
+            style={s.select}
+            value={selectedSubject}
+            onChange={e => setSelectedSubject(e.target.value)}
+            disabled={state === 'recording' || state === 'sending' || subjectOptions.length === 0}
+          >
+            {subjectOptions.length === 0 ? (
+              <option value="">{classSubjectLabel(selectedClassMeta, user?.uid)}</option>
+            ) : (
+              subjectOptions.map((subject) => (
+                <option key={subject.id} value={subject.name}>{subject.name}</option>
+              ))
+            )}
           </select>
         </div>
 
@@ -549,7 +598,7 @@ export default function RecordLesson() {
                 text={successMessage}
                 compact
               />
-              <button style={s.bigBtn} onClick={() => navigate('/teacher')}>
+              <button style={s.bigBtn} onClick={() => navigate(buildPath('/teacher'))}>
                 Wróć do panelu
               </button>
             </div>

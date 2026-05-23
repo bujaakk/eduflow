@@ -22,6 +22,7 @@ import {
   serverTimestamp,
 } from 'firebase/firestore'
 import { auth, db } from '../firebase'
+import { useEnvironment } from '../contexts/EnvironmentContext'
 
 function markPasswordSetupPending(uid) {
   try {
@@ -49,12 +50,28 @@ function hasPendingPasswordSetup(uid) {
 
 // Widok: 'login' | 'code' | 'setPassword'
 export default function Login() {
+  const { environment, environmentId, isDefaultEnvironment, buildPath } = useEnvironment()
   const [view, setView] = useState('login')
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
   const [pwValue, setPwValue] = useState('')
   const [pwConfirm, setPwConfirm] = useState('')
   const navigate = useNavigate()
+
+  const resolveEnvironmentPath = async (profileEnvironmentId, path) => {
+    const normalizedPath = path.startsWith('/') ? path : `/${path}`
+    const targetEnvironmentId = profileEnvironmentId || 'default'
+    if (targetEnvironmentId === 'default') return normalizedPath
+    if (!isDefaultEnvironment && targetEnvironmentId === environmentId) return buildPath(normalizedPath)
+    try {
+      const envSnap = await getDoc(doc(db, 'environments', targetEnvironmentId))
+      const slug = envSnap.exists() ? envSnap.data()?.slug : ''
+      if (slug) return `/e/${slug}${normalizedPath}`
+    } catch {
+      // Use the current route if the environment lookup fails.
+    }
+    return buildPath(normalizedPath)
+  }
 
   // Przy każdym wejściu na /login sprawdź czy zalogowany uczeń nie skończył aktywacji.
   useEffect(() => {
@@ -64,7 +81,13 @@ export default function Login() {
       try {
         const teacherSnap = await getDoc(doc(db, 'teachers', currentUser.uid))
         if (teacherSnap.exists()) {
-          navigate('/teacher', { replace: true })
+          const teacherEnvironmentId = teacherSnap.data()?.environmentId || 'default'
+          if (!isDefaultEnvironment && teacherEnvironmentId !== environmentId) {
+            setError('Nie masz dostępu do tego środowiska.')
+            await signOut(auth)
+            return
+          }
+          navigate(await resolveEnvironmentPath(teacherEnvironmentId, '/teacher'), { replace: true })
           return
         }
 
@@ -76,12 +99,18 @@ export default function Login() {
         }
 
         const studentData = studentSnap.data()
+        const studentEnvironmentId = studentData?.environmentId || 'default'
+        if (!isDefaultEnvironment && studentEnvironmentId !== environmentId) {
+          setError('Nie masz dostępu do tego środowiska.')
+          await signOut(auth)
+          return
+        }
         if (studentData?.passwordSet === false && hasPendingPasswordSetup(currentUser.uid)) {
           setView('setPassword')
           return
         }
 
-        navigate('/student', { replace: true })
+        navigate(await resolveEnvironmentPath(studentEnvironmentId, '/student'), { replace: true })
       } catch {
         setError('Nie udało się sprawdzić statusu konta. Odśwież stronę i spróbuj ponownie.')
       }
@@ -102,7 +131,13 @@ export default function Login() {
       const credential = await signInWithEmailAndPassword(auth, email, password)
       const teacherDoc = await getDoc(doc(db, 'teachers', credential.user.uid))
       if (teacherDoc.exists()) {
-        navigate('/teacher')
+        const teacherEnvironmentId = teacherDoc.data()?.environmentId || 'default'
+        if (!isDefaultEnvironment && teacherEnvironmentId !== environmentId) {
+          setError('Nie masz dostępu do tego środowiska.')
+          await signOut(auth)
+          return
+        }
+        navigate(await resolveEnvironmentPath(teacherEnvironmentId, '/teacher'))
         return
       }
       const studentDoc = await getDoc(doc(db, 'students', credential.user.uid))
@@ -111,11 +146,18 @@ export default function Login() {
         await signOut(auth)
         return
       }
-      if (studentDoc.data().passwordSet === false && hasPendingPasswordSetup(credential.user.uid)) {
+      const studentData = studentDoc.data()
+      const studentEnvironmentId = studentData?.environmentId || 'default'
+      if (!isDefaultEnvironment && studentEnvironmentId !== environmentId) {
+        setError('Nie masz dostępu do tego środowiska.')
+        await signOut(auth)
+        return
+      }
+      if (studentData.passwordSet === false && hasPendingPasswordSetup(credential.user.uid)) {
         setView('setPassword')
         return
       }
-      navigate('/student')
+      navigate(await resolveEnvironmentPath(studentEnvironmentId, '/student'))
     } catch (err) {
       setError(err?.code ? getErrorMessage(err.code) : 'Logowanie nie powiodło się. Spróbuj ponownie.')
     } finally {
@@ -129,13 +171,19 @@ export default function Login() {
     setLoading(true)
     try {
       const credential = await createUserWithEmailAndPassword(auth, email, password)
-      await setDoc(doc(db, 'teachers', credential.user.uid), {
+      const teacherPayload = {
         firstName,
         lastName,
         email,
+        environmentId,
+        role: 'teacher',
         createdAt: serverTimestamp(),
-      })
-      navigate('/teacher')
+      }
+      await Promise.all([
+        setDoc(doc(db, 'teachers', credential.user.uid), teacherPayload),
+        setDoc(doc(db, 'users', credential.user.uid), { ...teacherPayload, updatedAt: serverTimestamp() }, { merge: true }),
+      ])
+      navigate(buildPath('/teacher'))
     } catch (err) {
       setError(getErrorMessage(err.code))
     } finally {
@@ -157,7 +205,13 @@ export default function Login() {
       )
       const snapshot = await getDocs(q)
 
-      const invitationDoc = snapshot.docs.find((d) => String(d.data()?.code ?? '').trim() === normalizedCode)
+      const invitationDoc = snapshot.docs.find((d) => {
+        const data = d.data()
+        const invitationEnvironmentId = data?.environmentId || 'default'
+        const codeMatches = String(data?.code ?? '').trim() === normalizedCode
+        const environmentMatches = isDefaultEnvironment ? invitationEnvironmentId === 'default' : invitationEnvironmentId === environmentId
+        return codeMatches && environmentMatches
+      })
 
       if (!invitationDoc) {
         setError('Nieprawidłowy email lub kod. Sprawdź wiadomość od nauczyciela.')
@@ -184,17 +238,22 @@ export default function Login() {
           }
         }
 
-        await setDoc(doc(db, 'students', credential.user.uid), {
+        const studentPayload = {
           email: normalizedEmail,
           firstName: invitation.firstName ?? '',
           lastName: invitation.lastName ?? '',
+          role: 'student',
           teacherId: invitation.teacherId ?? '',
           classId: invitation.classId,
           classIds: invitation.classId ? [invitation.classId] : [],
+          environmentId: invitation.environmentId || 'default',
           joinedAt: serverTimestamp(),
           passwordSet: false,
-        }, { merge: true })
+        }
+        await setDoc(doc(db, 'students', credential.user.uid), studentPayload, { merge: true })
+        await setDoc(doc(db, 'users', credential.user.uid), { ...studentPayload, updatedAt: serverTimestamp() }, { merge: true })
         await setDoc(doc(db, 'student_profiles', credential.user.uid), {
+          environmentId: invitation.environmentId || 'default',
           weaknesses: [],
           errorHistory: [],
           aiRecommendation: '',
@@ -255,7 +314,9 @@ export default function Login() {
       await updatePassword(currentUser, pwValue)
       await setDoc(doc(db, 'students', currentUser.uid), { passwordSet: true }, { merge: true })
       clearPasswordSetupPending(currentUser.uid)
-      navigate('/student')
+      const studentSnap = await getDoc(doc(db, 'students', currentUser.uid))
+      const studentEnvironmentId = studentSnap.exists() ? (studentSnap.data()?.environmentId || 'default') : environmentId
+      navigate(await resolveEnvironmentPath(studentEnvironmentId, '/student'))
     } catch (err) {
       setError(getErrorMessage(err.code))
     } finally {
@@ -270,8 +331,8 @@ export default function Login() {
           <Logo height={34} style={{ filter: 'brightness(0) invert(1)' }} />
           <div className="auth-copy">
             <p className="eyebrow">Inteligentna nauka po lekcji</p>
-            <h1>Notatki, zadania i feedback w jednym miejscu.</h1>
-            <p>EduFlow zamienia nagraną lekcję w ścieżkę pracy ucznia, a nauczycielowi pokazuje postępy bez przekopywania się przez chaos.</p>
+            <h1>{environment?.name && environment.slug !== 'default' ? environment.name : 'Notatki, zadania i feedback w jednym miejscu.'}</h1>
+            <p>{environment?.name && environment.slug !== 'default' ? 'Twoje osobne środowisko EduFlow dla uczniów, nauczycieli i materiałów.' : 'EduFlow zamienia nagraną lekcję w ścieżkę pracy ucznia, a nauczycielowi pokazuje postępy bez przekopywania się przez chaos.'}</p>
           </div>
         </section>
 

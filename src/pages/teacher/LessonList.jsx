@@ -6,7 +6,9 @@ import {
 } from 'firebase/firestore'
 import { db } from '../../firebase'
 import { useAuth } from '../../contexts/AuthContext'
+import { useEnvironment } from '../../contexts/EnvironmentContext'
 import IllustrationState from '../../components/IllustrationState'
+import { classBelongsToTeacher, classSubjectLabel } from '../../utils/classModel'
 
 const toDateValue = (value) => {
   if (!value) return null
@@ -43,8 +45,10 @@ const formatDisplayTitle = (title, number) => {
 }
 
 export default function LessonList() {
-  const { user } = useAuth()
+  const { user, teacherProfile } = useAuth()
+  const { environmentId, isDefaultEnvironment, buildPath } = useEnvironment()
   const navigate = useNavigate()
+  const isEnvironmentAdmin = teacherProfile?.role === 'environment_admin'
   const [lessons, setLessons] = useState([])
   const [classes, setClasses] = useState({})
   const [expanded, setExpanded] = useState(null)
@@ -56,14 +60,23 @@ export default function LessonList() {
     const fetchData = async () => {
       const [lessonsSnap, classesSnap] = await Promise.all([
         getDocs(query(collection(db, 'lessons'), where('teacherId', '==', user.uid))),
-        getDocs(query(collection(db, 'classes'), where('teacherId', '==', user.uid))),
+        getDocs(collection(db, 'classes')),
       ])
 
       const classMap = {}
-      classesSnap.docs.forEach(d => { classMap[d.id] = d.data() })
+      classesSnap.docs.forEach(d => {
+        const data = d.data()
+        const sameEnvironment = (data.environmentId || 'default') === (isDefaultEnvironment ? 'default' : environmentId)
+        if (sameEnvironment && classBelongsToTeacher(data, user.uid, isEnvironmentAdmin)) classMap[d.id] = data
+      })
       setClasses(classMap)
 
-      const lessonList = lessonsSnap.docs.map(d => ({ id: d.id, ...d.data() }))
+      const lessonList = lessonsSnap.docs
+        .map(d => ({ id: d.id, ...d.data() }))
+        .filter((lesson) => {
+          const sameEnvironment = (lesson.environmentId || 'default') === (isDefaultEnvironment ? 'default' : environmentId)
+          return sameEnvironment || Boolean(classMap[lesson.classId])
+        })
       lessonList.sort((a, b) => dateToUnix(b.timestamp) - dateToUnix(a.timestamp))
 
       // Dla każdej lekcji policz ile tasks done
@@ -80,7 +93,7 @@ export default function LessonList() {
       setLoading(false)
     }
     fetchData()
-  }, [user])
+  }, [user, environmentId, isDefaultEnvironment, isEnvironmentAdmin])
 
   const toggleExpand = async (lessonId) => {
     if (expanded === lessonId) { setExpanded(null); return }
@@ -127,7 +140,7 @@ export default function LessonList() {
   return (
     <div style={s.page}>
       <header style={s.header}>
-        <button style={s.backBtn} onClick={() => navigate('/teacher')}>← Wróć</button>
+        <button style={s.backBtn} onClick={() => navigate(buildPath('/teacher'))}>← Wróć</button>
         <Logo height={26} />
       </header>
 
@@ -143,7 +156,7 @@ export default function LessonList() {
               title="Nie masz jeszcze lekcji"
               text="Nagraj pierwszą lekcję albo dodaj ją z widoku konkretnej klasy."
               action={(
-            <button style={s.bigBtn} onClick={() => navigate('/teacher/record')}>
+            <button style={s.bigBtn} onClick={() => navigate(buildPath('/teacher/record'))}>
               🎙 Nagraj pierwszą lekcję
             </button>
               )}
@@ -172,13 +185,13 @@ export default function LessonList() {
                       style={s.lessonTitleBtn}
                       onClick={(e) => {
                         e.stopPropagation()
-                        navigate(`/teacher/lesson/${lesson.id}`)
+                        navigate(buildPath(`/teacher/lesson/${lesson.id}`))
                       }}
                     >
                       {displayTitle}
                     </button>
                     <p style={s.lessonMeta}>
-                      {cls ? `${cls.name} · ${cls.subject}` : lesson.classId} &nbsp;·&nbsp; {formatDate(lessonDate)}
+                      {cls ? `${cls.name} · ${classSubjectLabel(cls, user?.uid)}` : lesson.classId} &nbsp;·&nbsp; {formatDate(lessonDate)}
                     </p>
                     {lesson.totalTasks > 0 && (
                       <div style={s.progressRow}>
@@ -207,7 +220,7 @@ export default function LessonList() {
                       <div key={row.taskId} style={s.studentRow}>
                         <span
                           style={{ ...s.studentName, cursor: 'pointer' }}
-                          onClick={() => navigate(`/teacher/student/${row.studentId}`)}
+                          onClick={() => navigate(buildPath(`/teacher/student/${row.studentId}`))}
                         >
                           {row.name}
                         </span>

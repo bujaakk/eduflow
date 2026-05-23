@@ -5,12 +5,14 @@ import { doc, getDoc, collection, query, where, getDocs } from 'firebase/firesto
 import { signOut } from 'firebase/auth'
 import { db, auth } from '../../firebase'
 import { useAuth } from '../../contexts/AuthContext'
+import { useEnvironment } from '../../contexts/EnvironmentContext'
 import completedLessonsImg from '../../assets/metric-completed-lessons.png'
 import studentActivityImg from '../../assets/metric-student-activity.png'
 import learningGapsImg from '../../assets/metric-learning-gaps.png'
 
 export default function StudentMyProfile() {
   const { user } = useAuth()
+  const { buildPath } = useEnvironment()
   const navigate = useNavigate()
 
   const [student, setStudent] = useState(null)
@@ -38,13 +40,40 @@ export default function StudentMyProfile() {
         const classSnap = await getDoc(doc(db, 'classes', studentData.classId))
         if (classSnap.exists()) {
           const cd = classSnap.data()
-          setClassName(`${cd.name} — ${cd.subject}`)
+          const subjectLabel = Array.isArray(cd.subjects) && cd.subjects.length > 0
+            ? cd.subjects.map((subject) => subject?.name).filter(Boolean).join(', ')
+            : (cd.subject || 'brak przedmiotów')
+          setClassName(`${cd.name} — ${subjectLabel}`)
 
-          // Nauczyciel klasy
-          const teacherSnap = await getDoc(doc(db, 'teachers', cd.teacherId))
-          if (teacherSnap.exists()) {
-            const td = teacherSnap.data()
-            setTeachers([{ name: `${td.firstName} ${td.lastName}`, subject: cd.subject }])
+          const teacherIds = [
+            cd.teacherId,
+            cd.homeroomTeacherId,
+            ...(Array.isArray(cd.subjects) ? cd.subjects.map((subject) => subject?.teacherId) : []),
+          ]
+            .map((value) => String(value || '').trim())
+            .filter(Boolean)
+
+          if (teacherIds.length > 0) {
+            const uniqueTeacherIds = [...new Set(teacherIds)]
+            const teacherDocs = await Promise.all(uniqueTeacherIds.map((teacherId) => getDoc(doc(db, 'teachers', teacherId))))
+            const subjectByTeacherId = new Map(
+              (Array.isArray(cd.subjects) ? cd.subjects : [])
+                .filter((subject) => subject?.teacherId)
+                .map((subject) => [subject.teacherId, subject?.name || 'Przedmiot'])
+            )
+
+            const teacherRows = teacherDocs
+              .filter((teacherSnap) => teacherSnap.exists())
+              .map((teacherSnap) => {
+                const td = teacherSnap.data()
+                return {
+                  name: `${td.firstName ?? ''} ${td.lastName ?? ''}`.trim() || td.email || teacherSnap.id,
+                  subject: subjectByTeacherId.get(teacherSnap.id) || td.subject || 'Wychowawca',
+                }
+              })
+            setTeachers(teacherRows)
+          } else {
+            setTeachers([])
           }
         }
       }
@@ -62,7 +91,7 @@ export default function StudentMyProfile() {
 
   const handleLogout = async () => {
     await signOut(auth)
-    navigate('/login')
+    navigate(buildPath('/login'))
   }
 
   if (loading) return <div style={s.loading}>Ładowanie...</div>
@@ -78,7 +107,7 @@ export default function StudentMyProfile() {
   return (
     <div style={s.page}>
       <header style={s.header}>
-        <button style={s.backBtn} onClick={() => navigate('/student')}>← Wróć</button>
+        <button style={s.backBtn} onClick={() => navigate(buildPath('/student'))}>← Wróć</button>
         <Logo height={26} />
         <button style={s.logoutBtn} onClick={handleLogout}>Wyloguj</button>
       </header>

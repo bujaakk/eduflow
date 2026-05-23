@@ -6,7 +6,8 @@ import { signOut } from 'firebase/auth'
 import { CheckCircle2, Clock3, Lock, LogOut, UserRound } from 'lucide-react'
 import { db, auth } from '../../firebase'
 import { useAuth } from '../../contexts/AuthContext'
-import IllustrationState from '../../components/IllustrationState'
+import { useEnvironment } from '../../contexts/EnvironmentContext'
+import { classSubjects, normalizeSubjectKey } from '../../utils/classModel'
 import completedLessonsImg from '../../assets/metric-completed-lessons.png'
 import studentActivityImg from '../../assets/metric-student-activity.png'
 import learningGapsImg from '../../assets/metric-learning-gaps.png'
@@ -43,13 +44,29 @@ const formatDisplayTitle = (title, number) => {
 }
 
 const isMaterialLesson = (lesson) => {
-  const type = String(lesson?.type || lesson?.source || '').toLowerCase()
+  const type = String(lesson?.type || '').toLowerCase()
+  const source = String(lesson?.source || '').toLowerCase()
   const category = String(lesson?.category || '').toLowerCase()
-  return type.includes('material') || type.includes('pdf') || category.includes('material')
+  return (
+    category.includes('material')
+    || type.includes('additional_material')
+    || type.includes('material')
+    || source.includes('pdf_material')
+    || source.includes('additional_material')
+  )
+}
+
+const resolveRowSubject = (row, classInfo) => {
+  const direct = String(row?.classSubject || row?.subject || row?.subjectName || '').trim()
+  if (direct) return direct
+  const subjects = classSubjects(classInfo)
+  if (subjects.length === 1) return subjects[0].name
+  return 'Inne'
 }
 
 export default function StudentDashboard() {
   const { user } = useAuth()
+  const { buildPath } = useEnvironment()
   const navigate = useNavigate()
   const [studentData, setStudentData] = useState(null)
   const [classData, setClassData] = useState(null)
@@ -60,6 +77,7 @@ export default function StudentDashboard() {
   const [classMaterials, setClassMaterials] = useState([])
   const [loading, setLoading] = useState(true)
   const [activeStudyTab, setActiveStudyTab] = useState('lessons')
+  const [activeSubjectFilter, setActiveSubjectFilter] = useState('')
 
   useEffect(() => {
     if (!user) return
@@ -82,8 +100,24 @@ export default function StudentDashboard() {
         const cls = classSnap.data()
         setClassData({ id: classSnap.id, ...cls })
 
-        const teacherSnap = await getDoc(doc(db, 'teachers', cls.teacherId))
-        if (teacherSnap.exists()) setTeachers([{ id: teacherSnap.id, ...teacherSnap.data() }])
+        const teacherIds = [
+          cls.teacherId,
+          cls.homeroomTeacherId,
+          ...(Array.isArray(cls.subjects) ? cls.subjects.map((subject) => subject?.teacherId) : []),
+        ]
+          .map((value) => String(value || '').trim())
+          .filter(Boolean)
+
+        if (teacherIds.length > 0) {
+          const uniqueTeacherIds = [...new Set(teacherIds)]
+          const teacherDocs = await Promise.all(uniqueTeacherIds.map((teacherId) => getDoc(doc(db, 'teachers', teacherId))))
+          const teacherRows = teacherDocs
+            .filter((teacherSnap) => teacherSnap.exists())
+            .map((teacherSnap) => ({ id: teacherSnap.id, ...teacherSnap.data() }))
+          setTeachers(teacherRows)
+        } else {
+          setTeachers([])
+        }
       }
 
       // Real-time: wszystkie lekcje klasy (także te bez wygenerowanych tasków)
@@ -91,7 +125,6 @@ export default function StudentDashboard() {
       unsubClassLessons = onSnapshot(lessonsQ, (snap) => {
         const classLessonRows = snap.docs
           .map((d) => ({ id: d.id, ...d.data() }))
-          .filter((lesson) => !isMaterialLesson(lesson))
           .sort((a, b) => (b.timestamp?.seconds ?? 0) - (a.timestamp?.seconds ?? 0))
         setClassLessons(classLessonRows)
       })
@@ -132,7 +165,7 @@ export default function StudentDashboard() {
 
   const handleLogout = async () => {
     await signOut(auth)
-    navigate('/login')
+    navigate(buildPath('/login'))
   }
 
   const done = tasks.filter(t => t.status === 'done').length
@@ -156,10 +189,48 @@ export default function StudentDashboard() {
 
   const fallbackLessons = Object.values(lessons)
   const visibleLessons = classLessons.length > 0 ? classLessons : fallbackLessons
-  const materialRows = classMaterials
   const lessonRows = visibleLessons.filter((lesson) => !isMaterialLesson(lesson))
-  const numberedLessonIds = [...visibleLessons]
-    .filter((lesson) => !isMaterialLesson(lesson))
+  const lessonMaterialRows = visibleLessons.filter((lesson) => isMaterialLesson(lesson))
+  const materialRows = [...classMaterials, ...lessonMaterialRows]
+  const hiddenSubjectKeys = new Set(['wychowawca'])
+  const classSubjectNames = classSubjects(classData)
+    .map((subject) => String(subject?.name || '').trim())
+    .filter((name) => name && !hiddenSubjectKeys.has(normalizeSubjectKey(name)))
+  const subjectNames = [...new Set([
+    ...classSubjectNames,
+    ...lessonRows.map((row) => resolveRowSubject(row, classData)),
+    ...materialRows.map((row) => resolveRowSubject(row, classData)),
+  ]
+    .map((name) => String(name || '').trim())
+    .filter((name) => name && !hiddenSubjectKeys.has(normalizeSubjectKey(name))))]
+  const firstSubjectKey = subjectNames[0] ? normalizeSubjectKey(subjectNames[0]) : ''
+  const effectiveSubjectFilter = activeSubjectFilter || firstSubjectKey
+
+  useEffect(() => {
+    if (subjectNames.length === 0) {
+      if (activeSubjectFilter) setActiveSubjectFilter('')
+      return
+    }
+    const exists = subjectNames.some((name) => normalizeSubjectKey(name) === activeSubjectFilter)
+    if (!exists) setActiveSubjectFilter(normalizeSubjectKey(subjectNames[0]))
+  }, [activeSubjectFilter, subjectNames])
+
+  const filteredLessonRows = lessonRows.filter((row) => {
+    if (!effectiveSubjectFilter) return true
+    const rowSubjectKey = normalizeSubjectKey(resolveRowSubject(row, classData))
+    if (hiddenSubjectKeys.has(rowSubjectKey)) return false
+    return rowSubjectKey === effectiveSubjectFilter
+  })
+  const filteredMaterialRows = materialRows.filter((row) => {
+    if (!effectiveSubjectFilter) return true
+    const rowSubjectKey = normalizeSubjectKey(resolveRowSubject(row, classData))
+    if (hiddenSubjectKeys.has(rowSubjectKey)) return false
+    return rowSubjectKey === effectiveSubjectFilter
+  })
+  const selectedSubjectName = subjectNames.find((name) => normalizeSubjectKey(name) === effectiveSubjectFilter) || 'Wybrany przedmiot'
+  const selectedSubjectLabel = selectedSubjectName || 'wybranego przedmiotu'
+
+  const numberedLessonIds = [...filteredLessonRows]
     .sort((a, b) => lessonToUnix(a) - lessonToUnix(b))
     .reduce((acc, lesson, index) => {
       acc[lesson.id] = index + 1
@@ -171,7 +242,7 @@ export default function StudentDashboard() {
       <header className="app-header">
         <Logo height={26} />
         <div className="header-actions">
-          <button className="btn btn-secondary" onClick={() => navigate('/student/profile')}>
+          <button className="btn btn-secondary" onClick={() => navigate(buildPath('/student/profile'))}>
             <UserRound size={16} />
             Mój profil
           </button>
@@ -189,12 +260,15 @@ export default function StudentDashboard() {
             <h1 className="page-title">Cześć, {studentFirstName}!</h1>
             <p className="page-subtitle">
               {classData?.name ?? '—'} · {teachers[0]
-                ? `${teachers[0].firstName} ${teachers[0].lastName}`
+                ? teachers
+                  .map((teacher) => `${teacher.firstName ?? ''} ${teacher.lastName ?? ''}`.trim() || teacher.email)
+                  .filter(Boolean)
+                  .join(', ')
                 : '—'}
             </p>
           </div>
           <div className="hero-actions">
-            <button className="btn btn-light" onClick={() => navigate('/student/profile')}>
+            <button className="btn btn-light" onClick={() => navigate(buildPath('/student/profile'))}>
               <UserRound size={17} />
               Zobacz profil
             </button>
@@ -219,18 +293,33 @@ export default function StudentDashboard() {
           </div>
         </div>
 
+        <div style={s.subjectTabs}>
+          {subjectNames.map((subjectName) => {
+            const key = normalizeSubjectKey(subjectName)
+            return (
+              <button
+                key={key}
+                style={effectiveSubjectFilter === key ? s.subjectTabActive : s.subjectTab}
+                onClick={() => setActiveSubjectFilter(key)}
+              >
+                {subjectName}
+              </button>
+            )
+          })}
+        </div>
+
         <div style={s.studyTabs}>
           <button
             style={activeStudyTab === 'lessons' ? s.studyTabActive : s.studyTab}
             onClick={() => setActiveStudyTab('lessons')}
           >
-            Moje lekcje
+            Lekcje
           </button>
           <button
             style={activeStudyTab === 'materials' ? s.studyTabActive : s.studyTab}
             onClick={() => setActiveStudyTab('materials')}
           >
-            Materiały dodatkowe
+            Materiały
           </button>
         </div>
 
@@ -243,132 +332,152 @@ export default function StudentDashboard() {
               <div className="loading-line w-70" />
             </div>
           </div>
-        ) : activeStudyTab === 'lessons' && lessonRows.length === 0 ? (
-          <div className="ui-card">
-            <IllustrationState
-              type="noLessons"
-              title="Brak lekcji do wykonania"
-              text="Gdy nauczyciel doda lekcję do Twojej klasy, pojawi się tutaj karta z postępem."
-            />
-          </div>
-        ) : activeStudyTab === 'lessons' ? (
-          <div className="stack-list">
-            {lessonRows.map(lesson => {
-              const task = taskByLessonId[lesson.id]
-              const lessonNumber = numberedLessonIds[lesson.id] ?? 1
-              const displayTitle = formatDisplayTitle(lesson?.title, lessonNumber)
-              const displayDate = resolveLessonDate(lesson)
-              const hasTask = Boolean(task)
-              const quizCompleted = task?.quizStatus === 'completed' || task?.status === 'done'
-              const noteUnlocked = task?.noteUnlocked === true || quizCompleted
-              const exercisesUnlocked = task?.exercisesUnlocked === true
-
-              let phase = 'locked'
-              if (hasTask && !quizCompleted) phase = 'quiz'
-              if (hasTask && noteUnlocked) phase = exercisesUnlocked ? 'exercises' : 'note'
-
-              const phaseMeta = {
-                locked: { label: 'Czeka na quiz', color: '#64748b', badge: 'badge-locked', icon: Lock },
-                quiz: { label: 'Najpierw quiz', color: '#f59e0b', badge: 'badge-progress', icon: Clock3 },
-                note: { label: 'Notatka odblokowana', color: '#22c55e', badge: 'badge-done', icon: CheckCircle2 },
-                exercises: { label: 'Ćwiczenia odblokowane', color: '#16a34a', badge: 'badge-done', icon: CheckCircle2 },
-              }
-              const meta = phaseMeta[phase]
-              const isLocked = phase === 'locked'
-              const StatusIcon = meta.icon
-
-              const handleCardOpen = () => {
-                if (!hasTask) return
-                if (!quizCompleted) {
-                  navigate(`/student/lesson/${task.id}`)
-                  return
-                }
-                if (noteUnlocked) {
-                  navigate(`/student/note/${task.id}`)
-                }
-              }
-
-              return (
-                <div
-                  key={lesson.id}
-                  style={{
-                    opacity: isLocked ? 0.6 : 1,
-                    cursor: isLocked ? 'not-allowed' : 'pointer',
-                    borderLeft: `4px solid ${meta.color}`,
-                  }}
-                  className="ui-card lesson-card"
-                  onClick={handleCardOpen}
-                >
-                  <div className={`badge ${meta.badge}`}>
-                    <StatusIcon size={14} />
-                    {meta.label}
-                  </div>
-                  <div className="card-title" style={{ marginTop: 14 }}>{displayTitle}</div>
-                  <div className="card-meta">
-                    {displayDate
-                      ? displayDate.toLocaleDateString('pl-PL', {
-                        day: '2-digit',
-                        month: '2-digit',
-                        year: 'numeric',
-                      })
-                      : '—'}
-                  </div>
-                  {task?.status === 'in_progress' && (
-                    <div className="progress-track">
-                      <div className="progress-fill" style={{
-                        width: `${Math.min(100, Math.round(((task.answeredCount ?? 0) / (task.questions?.length ?? 1)) * 100))}%`
-                      }} />
-                    </div>
-                  )}
-                  {hasTask && (
-                    <div className="card-meta" style={{ marginTop: 8 }}>
-                      {noteUnlocked ? 'Notatka: odblokowana' : 'Notatka: zablokowana do czasu ukończenia quizu'}
-                    </div>
-                  )}
-                </div>
-              )
-            })}
-          </div>
-        ) : materialRows.length === 0 ? (
-          <div className="ui-card">
-            <IllustrationState
-              type="noLessons"
-              title="Brak materiałów dodatkowych"
-              text="Gdy nauczyciel wrzuci PDF dla klasy, AI przygotuje tu krótką notatkę i opis."
-            />
-          </div>
         ) : (
-          <div className="stack-list">
-            {materialRows.map((material) => {
-              const displayDate = resolveLessonDate(material)
-              const isProcessing = material.processingStatus === 'processing' || material.status === 'processing'
-              return (
-                <div
-                  key={material.id}
-                  className="ui-card lesson-card"
-                  style={{ cursor: 'pointer', borderLeft: '4px solid #0ea5e9' }}
-                  onClick={() => navigate(`/student/material/${material.id}`)}
-                >
-                  <div className="badge badge-progress" style={{ background: '#e0f2fe', color: '#0369a1' }}>
-                    {isProcessing ? 'AI przygotowuje' : 'Materiał PDF'}
+          <>
+            <section className="ui-card" style={s.subjectHeaderCard}>
+              <p style={s.subjectHeaderEyebrow}>Wybrany przedmiot</p>
+              <h2 style={s.subjectHeaderTitle}>{selectedSubjectName}</h2>
+            </section>
+
+            {activeStudyTab === 'lessons' ? (
+              <section>
+                <h3 style={s.sectionHeading}>Lekcje</h3>
+                {filteredLessonRows.length === 0 ? (
+                  <div className="ui-card" style={s.emptyColumn}>
+                    <p style={s.emptyTitle}>Brak lekcji dla {selectedSubjectLabel}</p>
+                    <p style={s.emptyText}>Gdy nauczyciel doda lekcję do tego przedmiotu, pojawi się tutaj.</p>
                   </div>
-                  <div className="card-title" style={{ marginTop: 14 }}>{material.title || material.shortTitle || 'Materiał dodatkowy'}</div>
-                  <div className="card-meta">
-                    {displayDate
-                      ? displayDate.toLocaleDateString('pl-PL', {
-                        day: '2-digit',
-                        month: '2-digit',
-                        year: 'numeric',
-                      })
-                      : '—'}
+                ) : (
+                  <div className="stack-list">
+                    {filteredLessonRows.map((lesson) => {
+                      const task = taskByLessonId[lesson.id]
+                      const lessonNumber = numberedLessonIds[lesson.id] ?? 1
+                      const displayTitle = formatDisplayTitle(lesson?.title, lessonNumber)
+                      const displayDate = resolveLessonDate(lesson)
+                      const lessonSubject = resolveRowSubject(lesson, classData)
+                      const hasTask = Boolean(task)
+                      const quizCompleted = task?.quizStatus === 'completed' || task?.status === 'done'
+                      const noteUnlocked = task?.noteUnlocked === true || quizCompleted
+                      const exercisesUnlocked = task?.exercisesUnlocked === true
+
+                      let phase = 'locked'
+                      if (hasTask && !quizCompleted) phase = 'quiz'
+                      if (hasTask && noteUnlocked) phase = exercisesUnlocked ? 'exercises' : 'note'
+
+                      const phaseMeta = {
+                        locked: { label: 'Czeka na quiz', color: '#64748b', badge: 'badge-locked', icon: Lock },
+                        quiz: { label: 'Najpierw quiz', color: '#f59e0b', badge: 'badge-progress', icon: Clock3 },
+                        note: { label: 'Notatka odblokowana', color: '#22c55e', badge: 'badge-done', icon: CheckCircle2 },
+                        exercises: { label: 'Ćwiczenia odblokowane', color: '#16a34a', badge: 'badge-done', icon: CheckCircle2 },
+                      }
+                      const meta = phaseMeta[phase]
+                      const isLocked = phase === 'locked'
+                      const StatusIcon = meta.icon
+
+                      const handleCardOpen = () => {
+                        if (!hasTask) return
+                        if (!quizCompleted) {
+                          navigate(buildPath(`/student/lesson/${task.id}`))
+                          return
+                        }
+                        if (noteUnlocked) {
+                          navigate(buildPath(`/student/note/${task.id}`))
+                        }
+                      }
+
+                      return (
+                        <div
+                          key={lesson.id}
+                          style={{
+                            opacity: isLocked ? 0.6 : 1,
+                            cursor: isLocked ? 'not-allowed' : 'pointer',
+                            borderLeft: `4px solid ${meta.color}`,
+                          }}
+                          className="ui-card lesson-card"
+                          onClick={handleCardOpen}
+                        >
+                          <div className={`badge ${meta.badge}`}>
+                            <StatusIcon size={14} />
+                            {meta.label}
+                          </div>
+                          <div className="card-title" style={{ marginTop: 14 }}>{displayTitle}</div>
+                          <div className="card-meta">
+                            {displayDate
+                              ? displayDate.toLocaleDateString('pl-PL', {
+                                day: '2-digit',
+                                month: '2-digit',
+                                year: 'numeric',
+                              })
+                              : '—'}
+                          </div>
+                          <div className="card-meta" style={{ marginTop: 6 }}>Przedmiot: {lessonSubject}</div>
+                          {task?.status === 'in_progress' && (
+                            <div className="progress-track">
+                              <div
+                                className="progress-fill"
+                                style={{
+                                  width: `${Math.min(100, Math.round(((task.answeredCount ?? 0) / (task.questions?.length ?? 1)) * 100))}%`,
+                                }}
+                              />
+                            </div>
+                          )}
+                          {hasTask && (
+                            <div className="card-meta" style={{ marginTop: 8 }}>
+                              {noteUnlocked ? 'Notatka: odblokowana' : 'Notatka: zablokowana do czasu ukończenia quizu'}
+                            </div>
+                          )}
+                        </div>
+                      )
+                    })}
                   </div>
-                  <div className="card-meta" style={{ marginTop: 8 }}>
-                    {isProcessing ? 'AI skraca i opisuje materiał z PDF' : (material.description || 'Otwórz notatkę z materiału')}
+                )}
+              </section>
+            ) : (
+              <section>
+                <h3 style={s.sectionHeading}>Materiały</h3>
+                {filteredMaterialRows.length === 0 ? (
+                  <div className="ui-card" style={s.emptyColumn}>
+                    <p style={s.emptyTitle}>Brak materiałów dla {selectedSubjectLabel}</p>
+                    <p style={s.emptyText}>Gdy nauczyciel wrzuci materiał dla tego przedmiotu, pojawi się tutaj.</p>
                   </div>
-                </div>
-              )
-            })}
-          </div>
+                ) : (
+                  <div className="stack-list">
+                    {filteredMaterialRows.map((material) => {
+                      const displayDate = resolveLessonDate(material)
+                      const isProcessing = material.processingStatus === 'processing' || material.status === 'processing'
+                      const materialSubject = resolveRowSubject(material, classData)
+                      return (
+                        <div
+                          key={material.id}
+                          className="ui-card lesson-card"
+                          style={{ cursor: 'pointer', borderLeft: '4px solid #0ea5e9' }}
+                          onClick={() => navigate(buildPath(`/student/material/${material.id}`))}
+                        >
+                          <div className="badge badge-progress" style={{ background: '#e0f2fe', color: '#0369a1' }}>
+                            {isProcessing ? 'AI przygotowuje' : 'Materiał PDF'}
+                          </div>
+                          <div className="card-title" style={{ marginTop: 14 }}>{material.title || material.shortTitle || 'Materiał dodatkowy'}</div>
+                          <div className="card-meta">
+                            {displayDate
+                              ? displayDate.toLocaleDateString('pl-PL', {
+                                day: '2-digit',
+                                month: '2-digit',
+                                year: 'numeric',
+                              })
+                              : '—'}
+                          </div>
+                          <div className="card-meta" style={{ marginTop: 8 }}>
+                            {isProcessing ? 'AI skraca i opisuje materiał z PDF' : (material.description || 'Otwórz notatkę z materiału')}
+                          </div>
+                          <div className="card-meta" style={{ marginTop: 6 }}>Przedmiot: {materialSubject}</div>
+                        </div>
+                      )
+                    })}
+                  </div>
+                )}
+              </section>
+            )}
+          </>
         )}
       </main>
     </div>
@@ -377,9 +486,26 @@ export default function StudentDashboard() {
 
 const s = {
   page: { minHeight: '100vh', background: '#f9fafb', fontFamily: 'sans-serif' },
-  studyTabs: { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, margin: '28px 0 16px', background: '#eaf2ff', border: '1px solid #dbeafe', borderRadius: 16, padding: 6 },
-  studyTab: { border: 'none', borderRadius: 12, background: 'transparent', color: '#475569', padding: '12px 14px', cursor: 'pointer', fontWeight: 800, fontSize: 14 },
-  studyTabActive: { border: 'none', borderRadius: 12, background: '#2563eb', color: '#fff', padding: '12px 14px', cursor: 'pointer', fontWeight: 800, fontSize: 14, boxShadow: '0 10px 24px rgba(37,99,235,.24)' },
+  subjectTabs: {
+    display: 'flex',
+    gap: 8,
+    overflowX: 'auto',
+    margin: '14px 0 12px',
+    padding: '4px 2px 4px',
+    alignItems: 'center',
+  },
+  subjectTab: { border: '1px solid #cbd5e1', borderRadius: 999, background: '#fff', color: '#334155', padding: '8px 14px', cursor: 'pointer', fontWeight: 700, fontSize: 13, whiteSpace: 'nowrap' },
+  subjectTabActive: { border: '1px solid #2563eb', borderRadius: 999, background: '#dbeafe', color: '#1d4ed8', padding: '8px 14px', cursor: 'pointer', fontWeight: 800, fontSize: 13, whiteSpace: 'nowrap', boxShadow: '0 6px 14px rgba(37,99,235,.16)' },
+  studyTabs: { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, margin: '0 0 12px', background: '#f1f5f9', border: '1px solid #cbd5e1', borderRadius: 12, padding: 4, width: '100%' },
+  studyTab: { border: 'none', borderRadius: 9, background: 'transparent', color: '#475569', padding: '10px 14px', cursor: 'pointer', fontWeight: 800, fontSize: 14 },
+  studyTabActive: { border: 'none', borderRadius: 9, background: '#2563eb', color: '#fff', padding: '10px 14px', cursor: 'pointer', fontWeight: 800, fontSize: 14, boxShadow: '0 8px 16px rgba(37,99,235,.24)' },
+  subjectHeaderCard: { marginBottom: 14, padding: 14, border: '1px solid #dbeafe', background: '#f8fbff' },
+  subjectHeaderEyebrow: { margin: 0, color: '#64748b', fontSize: 11, fontWeight: 800, textTransform: 'uppercase', letterSpacing: '.06em' },
+  subjectHeaderTitle: { margin: '6px 0 0', color: '#0f172a', fontSize: 26, fontWeight: 900 },
+  sectionHeading: { fontSize: 18, fontWeight: 800, color: '#0f172a', margin: '0 0 10px' },
+  emptyColumn: { border: '1px dashed #cbd5e1', borderRadius: 12, padding: '16px 14px', background: '#f8fafc' },
+  emptyTitle: { margin: 0, color: '#0f172a', fontSize: 15, fontWeight: 800 },
+  emptyText: { margin: '7px 0 0', color: '#64748b', fontSize: 13, lineHeight: 1.45 },
   header: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '16px 32px', background: '#fff', borderBottom: '1px solid #e5e7eb' },
   logo: { fontSize: 20, fontWeight: 700, color: '#2563eb' },
   logoutBtn: { background: 'none', border: '1px solid #d1d5db', borderRadius: 8, padding: '6px 14px', cursor: 'pointer', fontSize: 14, color: '#6b7280' },

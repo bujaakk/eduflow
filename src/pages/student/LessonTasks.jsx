@@ -4,6 +4,7 @@ import { useParams, useNavigate } from 'react-router-dom'
 import { doc, getDoc, updateDoc, serverTimestamp, onSnapshot, increment } from 'firebase/firestore'
 import { auth, db } from '../../firebase'
 import { useAuth } from '../../contexts/AuthContext'
+import { useEnvironment } from '../../contexts/EnvironmentContext'
 import IllustrationState from '../../components/IllustrationState'
 
 const N8N_GRADE_URL = 'https://n8n.yourwayai.pl/webhook/eduflow-grade'
@@ -86,6 +87,7 @@ const getLevelColor = (value) => {
 export default function LessonTasks() {
   const { taskId } = useParams()
   const { user } = useAuth()
+  const { buildPath } = useEnvironment()
   const navigate = useNavigate()
 
   const [task, setTask] = useState(null)
@@ -240,7 +242,7 @@ export default function LessonTasks() {
       setRedirectCountdown((prev) => {
         if (prev <= 1) {
           clearInterval(interval)
-          navigate(`/student/note/${taskId}`, { replace: true, state: { justUnlocked: true } })
+          navigate(buildPath(`/student/note/${taskId}`), { replace: true, state: { justUnlocked: true } })
           return 0
         }
         return prev - 1
@@ -251,7 +253,7 @@ export default function LessonTasks() {
   }, [isTaskCompleted, navigate, taskId])
 
   const goToLessonNote = () => {
-    navigate(`/student/note/${taskId}`, { state: { justUnlocked: true } })
+    navigate(buildPath(`/student/note/${taskId}`), { state: { justUnlocked: true } })
   }
 
   const processSubmissionInBackground = async ({
@@ -388,7 +390,7 @@ export default function LessonTasks() {
   return (
     <div className="app-shell">
       <header className="app-header">
-        <button style={s.backBtn} onClick={() => navigate('/student')}>← Wróć</button>
+        <button style={s.backBtn} onClick={() => navigate(buildPath('/student'))}>← Wróć</button>
         <Logo height={26} />
         <span style={s.progressLabel}>Pytanie {currentQuestionNumber}/{totalQuestions}</span>
       </header>

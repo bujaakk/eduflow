@@ -7,9 +7,11 @@ import {
 } from 'firebase/firestore'
 import { db } from '../../firebase'
 import { useAuth } from '../../contexts/AuthContext'
+import { useEnvironment } from '../../contexts/EnvironmentContext'
 import IllustrationState from '../../components/IllustrationState'
 import { sanitizeGeneratedText } from '../../utils/contentSanitizer'
 import { uploadPdfMaterial } from '../../services/pdfMaterialUpload'
+import { classBelongsToTeacher, classSubjectLabel, classSubjectOptions, classSubjects, normalizeSubjectKey } from '../../utils/classModel'
 
 const toDateValue = (value) => {
   if (!value) return null
@@ -77,18 +79,27 @@ const formatDisplayTitle = (title, number) => {
 }
 
 const isMaterialLesson = (lesson) => {
-  const type = String(lesson?.type || lesson?.source || '').toLowerCase()
+  const type = String(lesson?.type || '').toLowerCase()
+  const source = String(lesson?.source || '').toLowerCase()
   const category = String(lesson?.category || '').toLowerCase()
-  return type.includes('material') || type.includes('pdf') || category.includes('material')
+  return (
+    category.includes('material')
+    || type.includes('additional_material')
+    || type.includes('material')
+    || source.includes('pdf_material')
+    || source.includes('additional_material')
+  )
 }
 
 const studentsLabel = (count) => `${count} ${count === 1 ? 'uczeń' : 'uczniów'}`
 
 export default function ClassView() {
   const { classId } = useParams()
-  const { user } = useAuth()
+  const { user, teacherProfile } = useAuth()
+  const { environmentId, isDefaultEnvironment, buildPath } = useEnvironment()
   const navigate = useNavigate()
   const [searchParams, setSearchParams] = useSearchParams()
+  const isEnvironmentAdmin = teacherProfile?.role === 'environment_admin'
 
   const [cls, setCls] = useState(null)
   const [students, setStudents] = useState([])
@@ -109,19 +120,24 @@ export default function ClassView() {
   const [assignError, setAssignError] = useState('')
 
   const [showLessonModal, setShowLessonModal] = useState(false)
-  const [lessonForm, setLessonForm] = useState({ title: '', summary: '' })
+  const [lessonForm, setLessonForm] = useState({ title: '', summary: '', subject: '' })
   const [lessonLoading, setLessonLoading] = useState(false)
   const [lessonError, setLessonError] = useState('')
   const [lessonDeleteLoadingId, setLessonDeleteLoadingId] = useState('')
   const [confirmDeleteLessonId, setConfirmDeleteLessonId] = useState('')
   const [showMaterialModal, setShowMaterialModal] = useState(false)
   const [pdfUploadTarget, setPdfUploadTarget] = useState('material')
-  const [materialForm, setMaterialForm] = useState({ title: '', file: null })
+  const [materialForm, setMaterialForm] = useState({ title: '', file: null, subject: '' })
   const [materialLoading, setMaterialLoading] = useState(false)
   const [materialError, setMaterialError] = useState('')
   const [materialInfo, setMaterialInfo] = useState('')
+  const [envTeachers, setEnvTeachers] = useState([])
+  const [subjectForm, setSubjectForm] = useState({ name: '', teacherId: '' })
+  const [subjectSaving, setSubjectSaving] = useState(false)
+  const [subjectError, setSubjectError] = useState('')
 
   const [confirmDelete, setConfirmDelete] = useState(null)
+  const belongsToEnvironment = (row) => (row?.environmentId || 'default') === (isDefaultEnvironment ? 'default' : environmentId)
 
   useEffect(() => {
     const requested = searchParams.get('tab')
@@ -151,6 +167,21 @@ export default function ClassView() {
       }
 
       const classData = { id: classDoc.id, ...classDoc.data() }
+      if (!belongsToEnvironment(classData)) {
+        setCls(null)
+        setStudents([])
+        setTeacherStudents([])
+        setLoading(false)
+        return
+      }
+      if (!classBelongsToTeacher(classData, user?.uid, isEnvironmentAdmin)) {
+        setCls(null)
+        setStudents([])
+        setTeacherStudents([])
+        setPageError('Ta klasa nie jest przypisana do Twoich przedmiotow.')
+        setLoading(false)
+        return
+      }
       setCls(classData)
       setPageError('')
       setAssignError('')
@@ -158,35 +189,57 @@ export default function ClassView() {
       try {
         const ids = classData.studentIds ?? []
 
-        const teacherIdForRoster = classData.teacherId || user?.uid
-        const teacherStudentsSnap = teacherIdForRoster
-          ? await getDocs(query(collection(db, 'students'), where('teacherId', '==', teacherIdForRoster)))
-          : { docs: [] }
+        const rosterQuery = getDocs(collection(db, 'students'))
+        const [rosterSnap, directClassSnap, classIdsSnap] = await Promise.all([
+          rosterQuery,
+          getDocs(query(collection(db, 'students'), where('classId', '==', classId))),
+          getDocs(query(collection(db, 'students'), where('classIds', 'array-contains', classId))),
+        ])
+
         const teacherRosterMap = {}
-        teacherStudentsSnap.docs.forEach((studentDoc) => {
+        rosterSnap.docs.forEach((studentDoc) => {
+          if (!belongsToEnvironment(studentDoc.data())) return
           teacherRosterMap[studentDoc.id] = { id: studentDoc.id, ...studentDoc.data() }
         })
 
-        if (ids.length === 0) {
-          setStudents([])
-          setTeacherStudents(Object.values(teacherRosterMap))
-          setLoading(false)
-          return
-        }
+        const classRosterMap = {}
+        directClassSnap.docs.forEach((studentDoc) => {
+          if (!belongsToEnvironment(studentDoc.data())) return
+          classRosterMap[studentDoc.id] = { id: studentDoc.id, ...studentDoc.data() }
+        })
+        classIdsSnap.docs.forEach((studentDoc) => {
+          if (!belongsToEnvironment(studentDoc.data())) return
+          classRosterMap[studentDoc.id] = { id: studentDoc.id, ...studentDoc.data() }
+        })
 
         const studentsData = await Promise.all(
           ids.map(async (uid) => {
+            if (classRosterMap[uid]) return classRosterMap[uid]
             const snap = await getDoc(doc(db, 'students', uid))
             return snap.exists() ? { id: snap.id, ...snap.data() } : null
           })
         )
-        const classStudents = studentsData.filter(Boolean)
-        classStudents.forEach((student) => {
+
+        const classStudents = [
+          ...studentsData.filter((student) => student && belongsToEnvironment(student)),
+          ...Object.values(classRosterMap),
+        ]
+          .reduce((acc, student) => {
+            acc[student.id] = student
+            return acc
+          }, {})
+
+        Object.values(classStudents).forEach((student) => {
           teacherRosterMap[student.id] = student
         })
 
-        setStudents(classStudents)
-        setTeacherStudents(Object.values(teacherRosterMap))
+        const sortedClassStudents = Object.values(classStudents).sort((a, b) => (`${a.firstName ?? ''} ${a.lastName ?? ''} ${a.email ?? ''}`)
+          .localeCompare(`${b.firstName ?? ''} ${b.lastName ?? ''} ${b.email ?? ''}`, 'pl'))
+        const sortedTeacherStudents = Object.values(teacherRosterMap).sort((a, b) => (`${a.firstName ?? ''} ${a.lastName ?? ''} ${a.email ?? ''}`)
+          .localeCompare(`${b.firstName ?? ''} ${b.lastName ?? ''} ${b.email ?? ''}`, 'pl'))
+
+        setStudents(sortedClassStudents)
+        setTeacherStudents(sortedTeacherStudents)
       } catch {
         setPageError('Nie udało się załadować listy uczniów.')
       } finally {
@@ -199,7 +252,7 @@ export default function ClassView() {
 
     const lessonsQuery = query(collection(db, 'lessons'), where('classId', '==', classId))
     const unsubLessons = onSnapshot(lessonsQuery, (snap) => {
-      const list = snap.docs.map(d => ({ id: d.id, ...d.data() }))
+      const list = snap.docs.map(d => ({ id: d.id, ...d.data(), sourceCollection: 'lessons' }))
       list.sort((a, b) => dateToUnix(b.timestamp) - dateToUnix(a.timestamp))
       setLessons(list)
       setLessonsLoading(false)
@@ -224,7 +277,7 @@ export default function ClassView() {
       unsubLessons()
       unsubMaterials()
     }
-  }, [classId])
+  }, [classId, environmentId, isDefaultEnvironment, user?.uid, isEnvironmentAdmin])
 
   const handleAssignStudentToClass = async () => {
     if (!classId) {
@@ -258,6 +311,7 @@ export default function ClassView() {
         classId,
         classIds: arrayUnion(classId),
         teacherId: user.uid,
+        environmentId,
       })
 
       await updateDoc(doc(db, 'classes', classId), {
@@ -292,6 +346,9 @@ export default function ClassView() {
       await addDoc(collection(db, 'lessons'), {
         classId,
         teacherId: user.uid,
+        environmentId,
+        className: cls?.name || '',
+        classSubject: lessonForm.subject || classSubjectText,
         title,
         summary,
         transcript: '',
@@ -320,12 +377,16 @@ export default function ClassView() {
     setMaterialInfo('')
     try {
       const title = materialForm.title.trim() || materialForm.file.name.replace(/\.pdf$/i, '')
-      const result = await uploadPdfMaterial(materialForm.file, { ...cls, id: classId }, { title, target: pdfUploadTarget })
+      const result = await uploadPdfMaterial(
+        materialForm.file,
+        { ...cls, id: classId, classSubject: materialForm.subject || classSubjectText },
+        { title, target: pdfUploadTarget }
+      )
       const message = result?.payload?.message || (pdfUploadTarget === 'lesson'
         ? 'PDF wysłany do AI. Lekcja pojawi się w zakładce Lekcje po zapisaniu przez n8n.'
         : 'PDF wysłany do AI. Materiał pojawi się uczniom po zapisaniu notatki przez n8n.')
       setMaterialInfo(message)
-      setMaterialForm({ title: '', file: null })
+      setMaterialForm({ title: '', file: null, subject: materialForm.subject || '' })
       setShowMaterialModal(false)
       handleTabChange(pdfUploadTarget === 'lesson' ? 'lessons' : 'materials')
     } catch (err) {
@@ -389,8 +450,13 @@ export default function ClassView() {
     setLessonDeleteLoadingId(material.id)
 
     try {
-      await deleteDoc(doc(db, 'materials', material.id))
-      setMaterials((prev) => prev.filter((item) => item.id !== material.id))
+      const sourceCollection = material.sourceCollection === 'lessons' ? 'lessons' : 'materials'
+      await deleteDoc(doc(db, sourceCollection, material.id))
+      if (sourceCollection === 'lessons') {
+        setLessons((prev) => prev.filter((item) => item.id !== material.id))
+      } else {
+        setMaterials((prev) => prev.filter((item) => item.id !== material.id))
+      }
       setConfirmDeleteLessonId('')
     } catch {
       setLessonError('Nie udało się usunąć materiału. Spróbuj ponownie.')
@@ -399,21 +465,185 @@ export default function ClassView() {
     }
   }
 
+  const classSubjectChoices = classSubjectOptions(cls, user?.uid, isEnvironmentAdmin)
+
+  useEffect(() => {
+    const fallback = classSubjectChoices[0]?.name || ''
+    setLessonForm((prev) => {
+      if (!showLessonModal) return prev
+      if (prev.subject && classSubjectChoices.some((option) => option.name === prev.subject)) return prev
+      return { ...prev, subject: fallback }
+    })
+    setMaterialForm((prev) => {
+      if (!showMaterialModal) return prev
+      if (prev.subject && classSubjectChoices.some((option) => option.name === prev.subject)) return prev
+      return { ...prev, subject: fallback }
+    })
+  }, [classSubjectChoices, showLessonModal, showMaterialModal])
+
+  const canManageSubjects = isEnvironmentAdmin || cls?.homeroomTeacherId === user?.uid
+
+  useEffect(() => {
+    if (!canManageSubjects) {
+      setEnvTeachers([])
+      return
+    }
+
+    let canceled = false
+    const loadTeachers = async () => {
+      try {
+        const teachersSnap = await getDocs(collection(db, 'teachers'))
+        if (canceled) return
+        const rows = teachersSnap.docs
+          .map((teacherDoc) => ({ id: teacherDoc.id, ...teacherDoc.data() }))
+          .filter((teacherRow) => belongsToEnvironment(teacherRow))
+          .sort((a, b) => `${a.firstName ?? ''} ${a.lastName ?? ''} ${a.email ?? ''}`
+            .localeCompare(`${b.firstName ?? ''} ${b.lastName ?? ''} ${b.email ?? ''}`, 'pl'))
+        setEnvTeachers(rows)
+      } catch {
+        if (!canceled) setSubjectError('Nie udało się załadować listy nauczycieli.')
+      }
+    }
+
+    loadTeachers()
+    return () => {
+      canceled = true
+    }
+  }, [canManageSubjects, environmentId, isDefaultEnvironment])
+
+  const teacherDisplayName = (teacherId) => {
+    const teacher = envTeachers.find((row) => row.id === teacherId)
+    if (!teacher) return teacherId ? 'Nauczyciel' : 'Nieprzypisany'
+    const fullName = `${teacher.firstName ?? ''} ${teacher.lastName ?? ''}`.trim()
+    return fullName || teacher.email || 'Nauczyciel'
+  }
+
+  const teacherSubjectSuggestions = (teacherId) => {
+    const teacher = envTeachers.find((row) => row.id === teacherId)
+    if (!teacher) return []
+    return [...new Set([
+      ...(Array.isArray(teacher.subjects) ? teacher.subjects : []),
+      teacher.subject,
+    ].map((value) => String(value || '').trim()).filter(Boolean))]
+  }
+
+  const saveClassSubjects = async (nextSubjects) => {
+    const normalized = nextSubjects
+      .map((subject, index) => ({
+        id: subject?.id || `${normalizeSubjectKey(subject?.name) || 'subject'}-${index}`,
+        name: String(subject?.name || '').trim(),
+        teacherId: String(subject?.teacherId || '').trim(),
+      }))
+      .filter((subject) => subject.name)
+
+    await updateDoc(doc(db, 'classes', classId), {
+      subjects: normalized,
+      subject: normalized[0]?.name || '',
+      teacherId: normalized[0]?.teacherId || '',
+    })
+
+    setCls((prev) => {
+      if (!prev) return prev
+      return {
+        ...prev,
+        subjects: normalized,
+        subject: normalized[0]?.name || '',
+        teacherId: normalized[0]?.teacherId || '',
+      }
+    })
+  }
+
+  const handleAssignSubjectTeacher = async () => {
+    if (!canManageSubjects || !cls) return
+
+    const subjectName = subjectForm.name.trim()
+    if (!subjectName) {
+      setSubjectError('Podaj nazwę przedmiotu.')
+      return
+    }
+    if (!subjectForm.teacherId) {
+      setSubjectError('Wybierz nauczyciela do przedmiotu.')
+      return
+    }
+
+    setSubjectSaving(true)
+    setSubjectError('')
+    try {
+      const currentSubjects = classSubjects(cls)
+      const targetKey = normalizeSubjectKey(subjectName)
+      const existingIndex = currentSubjects.findIndex((subject) => normalizeSubjectKey(subject?.name) === targetKey)
+      const nextSubjects = [...currentSubjects]
+
+      if (existingIndex >= 0) {
+        nextSubjects[existingIndex] = {
+          ...nextSubjects[existingIndex],
+          name: subjectName,
+          teacherId: subjectForm.teacherId,
+        }
+      } else {
+        nextSubjects.push({
+          id: `${targetKey || 'subject'}-${Date.now().toString(36)}`,
+          name: subjectName,
+          teacherId: subjectForm.teacherId,
+        })
+      }
+
+      await saveClassSubjects(nextSubjects)
+      setSubjectForm({ name: '', teacherId: '' })
+    } catch {
+      setSubjectError('Nie udało się zapisać przypisania przedmiotu.')
+    } finally {
+      setSubjectSaving(false)
+    }
+  }
+
+  const handleRemoveSubject = async (subjectId) => {
+    if (!canManageSubjects || !cls || !subjectId) return
+    setSubjectSaving(true)
+    setSubjectError('')
+    try {
+      const nextSubjects = classSubjects(cls).filter((subject) => (subject.id || '') !== subjectId)
+      await saveClassSubjects(nextSubjects)
+    } catch {
+      setSubjectError('Nie udało się usunąć przedmiotu.')
+    } finally {
+      setSubjectSaving(false)
+    }
+  }
+
   if (loading) return <div style={s.page}><p style={s.hint}>Ładowanie...</p></div>
   if (!cls) return <div style={s.page}><p style={s.hint}>Nie znaleziono klasy.</p></div>
+  const canSeeAllClassContent = isEnvironmentAdmin || cls?.homeroomTeacherId === user?.uid
+  const visibleLessons = canSeeAllClassContent
+    ? lessons
+    : lessons.filter((lesson) => String(lesson?.teacherId || '') === String(user?.uid || ''))
+  const visibleMaterials = canSeeAllClassContent
+    ? materials
+    : materials.filter((material) => String(material?.teacherId || '') === String(user?.uid || ''))
   const classStudentIds = new Set(students.map((student) => student.id))
   const availableStudents = teacherStudents
     .filter((student) => !classStudentIds.has(student.id))
     .sort((a, b) => (`${a.firstName ?? ''} ${a.lastName ?? ''} ${a.email ?? ''}`)
       .localeCompare(`${b.firstName ?? ''} ${b.lastName ?? ''} ${b.email ?? ''}`, 'pl'))
-  const materialRows = materials
-  const lessonRows = lessons.filter((lesson) => !isMaterialLesson(lesson))
+  const lessonMaterialRows = visibleLessons.filter((lesson) => isMaterialLesson(lesson))
+  const materialRows = [...visibleMaterials, ...lessonMaterialRows]
+    .sort((a, b) => dateToUnix(b.timestamp || b.createdAt) - dateToUnix(a.timestamp || a.createdAt))
+    .reduce((acc, row) => {
+      if (acc.some((item) => item.id === row.id && item.sourceCollection === row.sourceCollection)) return acc
+      acc.push(row)
+      return acc
+    }, [])
+  const lessonRows = visibleLessons.filter((lesson) => !isMaterialLesson(lesson))
+  const classSubjectText = classSubjectChoices.length > 0
+    ? classSubjectChoices.map((subject) => subject.name).filter(Boolean).join(', ')
+    : classSubjectLabel(cls, user?.uid)
+  const selectedTeacherSuggestions = teacherSubjectSuggestions(subjectForm.teacherId)
 
   return (
     <div className="app-shell">
       <header className="app-header">
         <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-          <button className="btn btn-ghost" onClick={() => navigate('/teacher')}>← Wróć</button>
+          <button className="btn btn-ghost" onClick={() => navigate(buildPath('/teacher'))}>← Wróć</button>
           <Logo height={26} />
         </div>
       </header>
@@ -423,7 +653,7 @@ export default function ClassView() {
           <div>
             <p className="eyebrow">Klasa</p>
             <h1 className="page-title" style={{ fontSize: 'clamp(28px, 4vw, 40px)' }}>{cls.name}</h1>
-            <p className="page-subtitle">{cls.subject} · {studentsLabel(students.length)} · {lessonRows.length} lekcji · {materialRows.length} materiałów</p>
+            <p className="page-subtitle">{classSubjectText} · {studentsLabel(students.length)} · {lessonRows.length} lekcji · {materialRows.length} materiałów</p>
           </div>
           <div className="hero-actions">
             <button className="btn btn-light" onClick={() => setShowLessonModal(true)}>+ Dodaj lekcję</button>
@@ -450,6 +680,89 @@ export default function ClassView() {
 
         {activeTab === 'students' && (
           <section className="ui-card" style={{ padding: 18 }}>
+            {canManageSubjects && (
+              <div style={s.subjectPanel}>
+                <h3 style={s.subjectTitle}>Przedmioty i nauczyciele klasy</h3>
+                <p style={s.modalHint}>Jako wychowawca możesz przypisać nauczyciela do przedmiotu. Przypisany nauczyciel od razu zobaczy tę klasę i doda tam lekcje dla swojego przedmiotu.</p>
+                <div style={s.subjectList}>
+                  {classSubjects(cls).length === 0 ? (
+                    <p style={s.hint}>Brak przypisanych przedmiotów.</p>
+                  ) : (
+                    classSubjects(cls).map((subject) => (
+                      <div key={subject.id || subject.name} style={s.subjectRow}>
+                        <div>
+                          <div style={s.subjectName}>{subject.name}</div>
+                          <div style={s.meta}>{teacherDisplayName(subject.teacherId)}</div>
+                        </div>
+                        <button
+                          style={s.deleteBtn}
+                          onClick={() => handleRemoveSubject(subject.id || '')}
+                          disabled={subjectSaving}
+                        >
+                          Usuń
+                        </button>
+                      </div>
+                    ))
+                  )}
+                </div>
+                <div style={s.subjectForm}>
+                  <input
+                    type="text"
+                    placeholder="Np. Matematyka"
+                    value={subjectForm.name}
+                    onChange={(e) => setSubjectForm((prev) => ({ ...prev, name: e.target.value }))}
+                    style={s.input}
+                    disabled={subjectSaving}
+                  />
+                  <select
+                    value={subjectForm.teacherId}
+                    onChange={(e) => {
+                      const teacherId = e.target.value
+                      const suggestions = teacherSubjectSuggestions(teacherId)
+                      setSubjectForm((prev) => ({
+                        ...prev,
+                        teacherId,
+                        name: prev.name || suggestions[0] || '',
+                      }))
+                    }}
+                    style={s.input}
+                    disabled={subjectSaving}
+                  >
+                    <option value="">Wybierz nauczyciela</option>
+                    {envTeachers.map((teacher) => (
+                      <option key={teacher.id} value={teacher.id}>
+                        {`${teacher.firstName ?? ''} ${teacher.lastName ?? ''}`.trim() || teacher.email || 'Nauczyciel'}
+                        {teacherSubjectSuggestions(teacher.id).length > 0
+                          ? ` (${teacherSubjectSuggestions(teacher.id).join(', ')})`
+                          : ''}
+                        {teacher.email ? ` — ${teacher.email}` : ''}
+                      </option>
+                    ))}
+                  </select>
+                  {selectedTeacherSuggestions.length > 0 && (
+                    <div style={s.subjectSuggestWrap}>
+                      <span style={s.modalHint}>Sugerowane przedmioty:</span>
+                      {selectedTeacherSuggestions.map((subjectName) => (
+                        <button
+                          key={subjectName}
+                          type="button"
+                          style={s.subjectSuggestBtn}
+                          onClick={() => setSubjectForm((prev) => ({ ...prev, name: subjectName }))}
+                          disabled={subjectSaving}
+                        >
+                          {subjectName}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                  <button className="btn btn-primary" onClick={handleAssignSubjectTeacher} disabled={subjectSaving}>
+                    {subjectSaving ? 'Zapisywanie...' : 'Przypisz nauczyciela'}
+                  </button>
+                </div>
+                {subjectError && <p style={s.error}>{subjectError}</p>}
+              </div>
+            )}
+
             {students.length === 0 ? (
               <IllustrationState
                 type="inviteStudents"
@@ -471,12 +784,12 @@ export default function ClassView() {
                     key={student.id}
                     className="ui-card"
                     style={s.studentCard}
-                    onClick={() => navigate(`/teacher/student/${student.id}`)}
+                    onClick={() => navigate(buildPath(`/teacher/student/${student.id}`))}
                   >
                     <div style={s.studentTop}>
                       <div style={s.avatar}>{initials}</div>
                       <div style={{ minWidth: 0 }}>
-                        <button style={s.nameLink} onClick={() => navigate(`/teacher/student/${student.id}`)}>
+                        <button style={s.nameLink} onClick={() => navigate(buildPath(`/teacher/student/${student.id}`))}>
                           {displayName}
                         </button>
                         <p style={s.meta}>{student.email}</p>
@@ -510,7 +823,7 @@ export default function ClassView() {
             <div style={s.lessonHeader}>
               <h2 style={s.subTitle}>Lekcje klasy</h2>
               <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-                <button className="btn btn-secondary" onClick={() => navigate('/teacher/record')}>Nagraj lekcję</button>
+                <button className="btn btn-secondary" onClick={() => navigate(buildPath('/teacher/record'))}>Nagraj lekcję</button>
                 <button className="btn btn-secondary" onClick={() => { setPdfUploadTarget('lesson'); setShowMaterialModal(true) }}>PDF jako lekcja</button>
                 <button className="btn btn-primary" onClick={() => setShowLessonModal(true)}>Dodaj lekcję</button>
               </div>
@@ -524,7 +837,7 @@ export default function ClassView() {
                 text="Dodaj lekcję ręcznie albo rozpocznij nagranie i przypisz materiał do tej klasy."
                 action={(
                   <>
-                    <button className="btn btn-secondary" onClick={() => navigate('/teacher/record')}>Nagraj lekcję</button>
+                    <button className="btn btn-secondary" onClick={() => navigate(buildPath('/teacher/record'))}>Nagraj lekcję</button>
                     <button className="btn btn-secondary" onClick={() => { setPdfUploadTarget('lesson'); setShowMaterialModal(true) }}>PDF jako lekcja</button>
                     <button className="btn btn-primary" onClick={() => setShowLessonModal(true)}>Dodaj lekcję</button>
                   </>
@@ -546,9 +859,9 @@ export default function ClassView() {
                       key={lesson.id}
                       className="ui-card"
                       style={s.lessonCard}
-                      onClick={() => navigate(`/teacher/lesson/${lesson.id}`)}
+                      onClick={() => navigate(buildPath(`/teacher/lesson/${lesson.id}`))}
                     >
-                      <button style={s.lessonLink} onClick={(e) => { e.stopPropagation(); navigate(`/teacher/lesson/${lesson.id}`) }}>
+                      <button style={s.lessonLink} onClick={(e) => { e.stopPropagation(); navigate(buildPath(`/teacher/lesson/${lesson.id}`)) }}>
                         {displayTitle}
                       </button>
                       {previewText && <p style={s.meta}>{previewText}</p>}
@@ -718,6 +1031,19 @@ export default function ClassView() {
           <div style={s.modal} onClick={e => e.stopPropagation()}>
             <h2 style={s.modalTitle}>Dodaj lekcję</h2>
             <p style={s.modalHint}>Ta lekcja będzie widoczna w zakładce „Lekcje” tej klasy.</p>
+            <select
+              value={lessonForm.subject}
+              onChange={e => setLessonForm(prev => ({ ...prev, subject: e.target.value }))}
+              style={s.input}
+            >
+              {classSubjectChoices.length === 0 ? (
+                <option value="">{classSubjectText}</option>
+              ) : (
+                classSubjectChoices.map((subject) => (
+                  <option key={subject.id} value={subject.name}>{subject.name}</option>
+                ))
+              )}
+            </select>
             <input
               type="text"
               placeholder="Tytuł lekcji"
@@ -733,7 +1059,7 @@ export default function ClassView() {
             />
             {lessonError && <p style={s.error}>{lessonError}</p>}
             <div style={s.modalBtns}>
-              <button style={s.cancelModalBtn} onClick={() => { setShowLessonModal(false); setLessonForm({ title: '', summary: '' }); setLessonError('') }}>
+              <button style={s.cancelModalBtn} onClick={() => { setShowLessonModal(false); setLessonForm({ title: '', summary: '', subject: lessonForm.subject || '' }); setLessonError('') }}>
                 Anuluj
               </button>
               <button style={s.primaryBtn} onClick={handleAddLesson} disabled={lessonLoading}>
@@ -762,6 +1088,20 @@ export default function ClassView() {
               style={s.input}
               disabled={materialLoading}
             />
+            <select
+              value={materialForm.subject}
+              onChange={e => setMaterialForm(prev => ({ ...prev, subject: e.target.value }))}
+              style={{ ...s.input, marginTop: 10 }}
+              disabled={materialLoading}
+            >
+              {classSubjectChoices.length === 0 ? (
+                <option value="">{classSubjectText}</option>
+              ) : (
+                classSubjectChoices.map((subject) => (
+                  <option key={subject.id} value={subject.name}>{subject.name}</option>
+                ))
+              )}
+            </select>
             <input
               type="file"
               accept="application/pdf,.pdf"
@@ -772,7 +1112,7 @@ export default function ClassView() {
             {materialForm.file && <p style={s.modalHint}>Wybrano: {materialForm.file.name}</p>}
             {materialError && <p style={s.error}>{materialError}</p>}
             <div style={s.modalBtns}>
-              <button style={s.cancelModalBtn} onClick={() => { setShowMaterialModal(false); setMaterialForm({ title: '', file: null }); setMaterialError('') }} disabled={materialLoading}>
+              <button style={s.cancelModalBtn} onClick={() => { setShowMaterialModal(false); setMaterialForm({ title: '', file: null, subject: materialForm.subject || '' }); setMaterialError('') }} disabled={materialLoading}>
                 Anuluj
               </button>
               <button style={s.primaryBtn} onClick={handleUploadMaterial} disabled={materialLoading || !materialForm.file}>
@@ -789,8 +1129,16 @@ export default function ClassView() {
 const s = {
   page: { minHeight: '100vh', background: '#f9fafb', fontFamily: 'sans-serif' },
   tabWrap: { display: 'flex', gap: 10, marginBottom: 14, flexWrap: 'wrap' },
-  studentGrid: { display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))', gap: 12 },
-  studentCard: { padding: 16, borderRadius: 18, border: '1px solid #dbe3f1', cursor: 'pointer' },
+  subjectPanel: { marginBottom: 18, padding: 14, borderRadius: 14, border: '1px solid #dbe3f1', background: '#f8fafc' },
+  subjectTitle: { margin: '0 0 10px', color: '#0f172a', fontSize: 17, fontWeight: 800 },
+  subjectList: { display: 'grid', gap: 8, marginBottom: 12 },
+  subjectRow: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, padding: '10px 12px', borderRadius: 10, border: '1px solid #e2e8f0', background: '#fff' },
+  subjectName: { fontSize: 14, color: '#0f172a', fontWeight: 700 },
+  subjectForm: { display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 10, alignItems: 'stretch' },
+  subjectSuggestWrap: { gridColumn: '1 / -1', display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center', marginTop: -2 },
+  subjectSuggestBtn: { border: '1px solid #bfdbfe', borderRadius: 999, background: '#eff6ff', color: '#1d4ed8', fontSize: 12, fontWeight: 700, padding: '4px 10px', cursor: 'pointer' },
+  studentGrid: { display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: 12 },
+  studentCard: { padding: 16, borderRadius: 18, border: '1px solid #dbe3f1', cursor: 'pointer', minWidth: 0 },
   studentTop: { display: 'flex', gap: 12, alignItems: 'center', marginBottom: 12 },
   avatar: { width: 46, height: 46, borderRadius: 14, display: 'grid', placeItems: 'center', flexShrink: 0, color: '#fff', background: 'linear-gradient(135deg, #2563eb, #14b8a6)', fontWeight: 800, fontSize: 15 },
   profileMetaGrid: { display: 'grid', gridTemplateColumns: 'auto 1fr', gap: 8, alignItems: 'center', padding: '10px 12px', background: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: 12 },
@@ -814,7 +1162,7 @@ const s = {
   codeDisplay: { display: 'inline-block', marginLeft: 10, padding: '4px 14px', background: '#fff', border: '2px solid #22c55e', borderRadius: 8, fontFamily: 'monospace', fontSize: 22, fontWeight: 700, letterSpacing: 6, color: '#15803d' },
   codeCloseBtn: { background: 'none', border: 'none', cursor: 'pointer', fontSize: 18, color: '#6b7280', flexShrink: 0 },
   nameLink: { background: 'none', border: 'none', color: '#2563eb', cursor: 'pointer', fontSize: 15, fontWeight: 700, padding: 0, textAlign: 'left' },
-  meta: { fontSize: 13, color: '#64748b', marginTop: 4 },
+  meta: { fontSize: 13, color: '#64748b', marginTop: 4, overflowWrap: 'anywhere', wordBreak: 'break-word' },
   deleteBtn: { background: 'none', border: 'none', color: '#ef4444', cursor: 'pointer', fontSize: 13 },
   dangerBtn: { background: '#ef4444', color: '#fff', border: 'none', borderRadius: 6, padding: '4px 10px', cursor: 'pointer', fontSize: 13 },
   cancelBtn: { background: 'none', border: 'none', color: '#6b7280', cursor: 'pointer', fontSize: 13, marginLeft: 4 },

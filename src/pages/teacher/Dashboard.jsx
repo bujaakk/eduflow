@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { initializeApp, getApps } from 'firebase/app'
 import { useNavigate } from 'react-router-dom'
 import {
   addDoc,
@@ -11,13 +12,15 @@ import {
   getDocs,
   query,
   serverTimestamp,
+  setDoc,
   updateDoc,
   where,
 } from 'firebase/firestore'
-import { signOut } from 'firebase/auth'
+import { createUserWithEmailAndPassword, getAuth, signOut } from 'firebase/auth'
 import { BookOpen, LogOut, Mic, School, Users } from 'lucide-react'
-import { db, auth } from '../../firebase'
+import { db, auth, firebaseConfig } from '../../firebase'
 import { useAuth } from '../../contexts/AuthContext'
+import { useEnvironment } from '../../contexts/EnvironmentContext'
 import Logo from '../../components/Logo'
 import IllustrationState from '../../components/IllustrationState'
 import completedLessonsImg from '../../assets/metric-completed-lessons.png'
@@ -25,6 +28,8 @@ import studentActivityImg from '../../assets/metric-student-activity.png'
 import aiRecommendationsImg from '../../assets/metric-ai-recommendations.png'
 
 const INVITE_WEBHOOK_URL = import.meta.env.VITE_INVITE_WEBHOOK_URL || '/api/invite'
+const secondaryApp = getApps().find(app => app.name === 'teacher-admin') || initializeApp(firebaseConfig, 'teacher-admin')
+const secondaryAuth = getAuth(secondaryApp)
 
 function sendInviteEmail(payload) {
   fetch(INVITE_WEBHOOK_URL, {
@@ -36,6 +41,7 @@ function sendInviteEmail(payload) {
 
 export default function TeacherDashboard() {
   const { user, teacherProfile } = useAuth()
+  const { environmentId, isDefaultEnvironment, buildPath } = useEnvironment()
   const [classes, setClasses] = useState([])
   const [students, setStudents] = useState([])
   const [stats, setStats] = useState({ lessons: 0, students: 0 })
@@ -46,68 +52,119 @@ export default function TeacherDashboard() {
   const [studentLoading, setStudentLoading] = useState(false)
   const [deleteStudentId, setDeleteStudentId] = useState('')
   const [studentQuery, setStudentQuery] = useState('')
+  const [envTeachers, setEnvTeachers] = useState([])
+  const [envClasses, setEnvClasses] = useState([])
+  const [adminTeacherForm, setAdminTeacherForm] = useState({ firstName: '', lastName: '', email: '', password: '', subjectsText: '' })
+  const [adminClassForm, setAdminClassForm] = useState({ name: '', homeroomTeacherId: '' })
+  const [adminMsg, setAdminMsg] = useState('')
+  const [adminLoading, setAdminLoading] = useState(false)
+  const [hasAdminAccess, setHasAdminAccess] = useState(false)
+  const [panelMode, setPanelMode] = useState('teacher')
   const navigate = useNavigate()
 
   const studentsLabel = (count) => `${count} ${count === 1 ? 'uczeń' : 'uczniów'}`
+  const belongsToEnvironment = (row) => (row?.environmentId || 'default') === (isDefaultEnvironment ? 'default' : environmentId)
+  const isEnvironmentAdmin = hasAdminAccess
+  const classBelongsToTeacher = (cls) => {
+    if (isEnvironmentAdmin) return true
+    if (cls.teacherId === user?.uid || cls.homeroomTeacherId === user?.uid) return true
+    return Array.isArray(cls.subjects) && cls.subjects.some((subject) => subject.teacherId === user?.uid)
+  }
 
-  const reconcileClassesWithActiveStudents = async (classRows, activeStudentIds) => {
-    const normalizedRows = []
-    for (const cls of classRows) {
-      const rawIds = Array.isArray(cls.studentIds) ? cls.studentIds : []
-      const staleIds = rawIds.filter((id) => !activeStudentIds.has(id))
-      const validIds = rawIds.filter((id) => activeStudentIds.has(id))
-
-      if (staleIds.length > 0) {
-        try {
-          await updateDoc(doc(db, 'classes', cls.id), {
-            studentIds: arrayRemove(...staleIds),
-          })
-        } catch {
-          // UI still uses filtered values even if cleanup write fails.
-        }
+  useEffect(() => {
+    const resolveAdminAccess = async () => {
+      if (!user?.uid) {
+        setHasAdminAccess(false)
+        return
       }
 
-      normalizedRows.push({
-        ...cls,
-        studentIds: validIds,
-      })
+      if (teacherProfile?.role === 'environment_admin') {
+        setHasAdminAccess(true)
+        return
+      }
+
+      if (!environmentId || environmentId === 'default') {
+        setHasAdminAccess(false)
+        return
+      }
+
+      try {
+        const envSnap = await getDoc(doc(db, 'environments', environmentId))
+        if (!envSnap.exists()) {
+          setHasAdminAccess(false)
+          return
+        }
+        const envData = envSnap.data()
+        const adminIds = Array.isArray(envData?.adminIds)
+          ? envData.adminIds
+          : (envData?.adminId ? [envData.adminId] : [])
+        setHasAdminAccess(adminIds.includes(user.uid))
+      } catch {
+        setHasAdminAccess(false)
+      }
     }
-    return normalizedRows
-  }
+
+    resolveAdminAccess()
+  }, [user?.uid, teacherProfile?.role, environmentId])
+
+  useEffect(() => {
+    if (!isEnvironmentAdmin && panelMode !== 'teacher') {
+      setPanelMode('teacher')
+    }
+  }, [isEnvironmentAdmin, panelMode])
+
+  const reconcileClassesWithActiveStudents = async (classRows) => classRows.map((cls) => ({
+    ...cls,
+    studentIds: Array.isArray(cls.studentIds) ? cls.studentIds : [],
+  }))
 
   useEffect(() => {
     if (!user) return
     const fetchData = async () => {
-      const classesSnap = await getDocs(
-        query(collection(db, 'classes'), where('teacherId', '==', user.uid))
-      )
-      const classesData = classesSnap.docs.map(d => ({ id: d.id, ...d.data() }))
+      const studentQuery = getDocs(collection(db, 'students'))
+      const classesSnap = await getDocs(collection(db, 'classes'))
+      const classesData = classesSnap.docs.map(d => ({ id: d.id, ...d.data() })).filter((cls) => belongsToEnvironment(cls) && classBelongsToTeacher(cls))
 
       const lessonsSnap = await getDocs(
         query(collection(db, 'lessons'), where('teacherId', '==', user.uid))
       )
 
       const studentMap = {}
-      const activeStudentsSnap = await getDocs(query(collection(db, 'students'), where('teacherId', '==', user.uid)))
-      activeStudentsSnap.docs.forEach((d) => {
+      const activeStudentsSnap = await studentQuery
+      const activeStudentDocs = activeStudentsSnap.docs.filter((d) => belongsToEnvironment(d.data()))
+      activeStudentDocs.forEach((d) => {
         studentMap[d.id] = { id: d.id, kind: 'active', ...d.data() }
       })
-      const activeStudentIds = new Set(activeStudentsSnap.docs.map((d) => d.id))
 
-      const normalizedClasses = await reconcileClassesWithActiveStudents(classesData, activeStudentIds)
+      const normalizedClasses = await reconcileClassesWithActiveStudents(classesData)
 
       const pendingInvitesSnap = await getDocs(query(collection(db, 'invitations'), where('teacherId', '==', user.uid)))
       pendingInvitesSnap.docs.forEach((d) => {
         const data = d.data()
+        if (!belongsToEnvironment(data)) return
         if (data.status === 'used') return
         studentMap[`invite:${d.id}`] = { id: `invite:${d.id}`, inviteId: d.id, kind: 'pending', ...data }
       })
 
+      await Promise.all(normalizedClasses.flatMap((cls) => ([
+        getDocs(query(collection(db, 'students'), where('classId', '==', cls.id))),
+        getDocs(query(collection(db, 'students'), where('classIds', 'array-contains', cls.id))),
+      ])).map(async (snapshotPromise) => {
+        const snapshot = await snapshotPromise
+        snapshot.docs.forEach((docSnap) => {
+          const data = docSnap.data()
+          if (!belongsToEnvironment(data)) return
+          studentMap[docSnap.id] = { id: docSnap.id, kind: 'active', ...data }
+        })
+      }))
+
       await Promise.all(normalizedClasses.flatMap((cls) => (cls.studentIds ?? []).map(async (studentId) => {
         if (studentMap[studentId]) return
         const studentSnap = await getDoc(doc(db, 'students', studentId))
-        if (studentSnap.exists()) studentMap[studentId] = { id: studentSnap.id, kind: 'active', ...studentSnap.data() }
+        if (studentSnap.exists() && belongsToEnvironment(studentSnap.data())) studentMap[studentId] = { id: studentSnap.id, kind: 'active', ...studentSnap.data() }
       })))
+
+      const lessonsCount = lessonsSnap.docs.filter((d) => belongsToEnvironment(d.data())).length
 
       const roster = Object.values(studentMap).sort((a, b) => {
         const aName = `${a.firstName ?? ''} ${a.lastName ?? ''} ${a.email ?? ''}`.trim()
@@ -116,30 +173,149 @@ export default function TeacherDashboard() {
       })
       setClasses(normalizedClasses)
       setStudents(roster)
-      setStats({ lessons: lessonsSnap.size, students: roster.length })
+      setStats({ lessons: lessonsCount, students: roster.length })
       setLoading(false)
     }
     fetchData()
-  }, [user])
+  }, [user, environmentId, isDefaultEnvironment, isEnvironmentAdmin])
+
+  useEffect(() => {
+    if (!user || !isEnvironmentAdmin) return
+    const fetchAdminData = async () => {
+      const [teacherSnap, classSnap] = await Promise.all([
+        getDocs(collection(db, 'teachers')),
+        getDocs(collection(db, 'classes')),
+      ])
+      setEnvTeachers(teacherSnap.docs.map(d => ({ id: d.id, ...d.data() })).filter(belongsToEnvironment))
+      setEnvClasses(classSnap.docs.map(d => ({ id: d.id, ...d.data() })).filter(belongsToEnvironment))
+    }
+    fetchAdminData()
+  }, [user, isEnvironmentAdmin, environmentId, isDefaultEnvironment])
+
+  const refreshAdminData = async () => {
+    if (!isEnvironmentAdmin) return
+    const [teacherSnap, classSnap] = await Promise.all([
+      getDocs(collection(db, 'teachers')),
+      getDocs(collection(db, 'classes')),
+    ])
+    setEnvTeachers(teacherSnap.docs.map(d => ({ id: d.id, ...d.data() })).filter(belongsToEnvironment))
+    setEnvClasses(classSnap.docs.map(d => ({ id: d.id, ...d.data() })).filter(belongsToEnvironment))
+  }
+
+  const displayUserName = (person) => `${person?.firstName ?? ''} ${person?.lastName ?? ''}`.trim() || person?.email || 'Użytkownik'
+  const teacherSubjectNames = (teacher) => Array.isArray(teacher?.subjects) && teacher.subjects.length > 0
+    ? teacher.subjects.join(', ')
+    : (teacher?.subject || 'brak przedmiotów')
+
+  const handleCreateEnvironmentTeacher = async (event) => {
+    event.preventDefault()
+    setAdminMsg('')
+    setAdminLoading(true)
+    try {
+      const firstName = adminTeacherForm.firstName.trim()
+      const lastName = adminTeacherForm.lastName.trim()
+      const email = adminTeacherForm.email.trim().toLowerCase()
+      const password = adminTeacherForm.password
+      const subjects = adminTeacherForm.subjectsText.split(',').map(item => item.trim()).filter(Boolean)
+      if (!firstName || !lastName || !email || !password) throw new Error('Uzupełnij dane nauczyciela i hasło.')
+      let uid = ''
+      try {
+        const cred = await createUserWithEmailAndPassword(secondaryAuth, email, password)
+        uid = cred.user.uid
+        await secondaryAuth.signOut()
+      } catch (err) {
+        if (err?.code !== 'auth/email-already-in-use') throw err
+        const existingSnap = await getDocs(query(collection(db, 'users'), where('email', '==', email)))
+        if (existingSnap.empty) throw err
+        uid = existingSnap.docs[0].id
+      }
+      const payload = { firstName, lastName, email, role: 'teacher', environmentId, subject: subjects[0] || '', subjects, updatedAt: serverTimestamp() }
+      await Promise.all([
+        setDoc(doc(db, 'teachers', uid), { ...payload, createdAt: serverTimestamp() }, { merge: true }),
+        setDoc(doc(db, 'users', uid), payload, { merge: true }),
+      ])
+      setAdminTeacherForm({ firstName: '', lastName: '', email: '', password: '', subjectsText: '' })
+      setAdminMsg(`✅ Dodano nauczyciela ${firstName} ${lastName}.`)
+      await refreshAdminData()
+    } catch (err) {
+      setAdminMsg(`❌ ${err?.message || 'Nie udało się dodać nauczyciela.'}`)
+    } finally {
+      setAdminLoading(false)
+    }
+  }
+
+  const handleCreateEnvironmentClass = async (event) => {
+    event.preventDefault()
+    setAdminMsg('')
+    setAdminLoading(true)
+    try {
+      const name = adminClassForm.name.trim()
+      const homeroomTeacherId = adminClassForm.homeroomTeacherId
+      const homeroomTeacher = envTeachers.find(teacher => teacher.id === homeroomTeacherId)
+      if (!name) throw new Error('Podaj nazwę klasy.')
+      await addDoc(collection(db, 'classes'), {
+        name,
+        homeroomTeacherId,
+        homeroomTeacherName: homeroomTeacher ? displayUserName(homeroomTeacher) : '',
+        subjects: [],
+        teacherId: '',
+        subject: '',
+        environmentId,
+        studentIds: [],
+        createdAt: serverTimestamp(),
+      })
+      setAdminClassForm({ name: '', homeroomTeacherId: '' })
+      setAdminMsg(`✅ Dodano klasę ${name}.`)
+      await refreshAdminData()
+      await refreshAfterRosterChange()
+    } catch (err) {
+      setAdminMsg(`❌ ${err?.message || 'Nie udało się dodać klasy.'}`)
+    } finally {
+      setAdminLoading(false)
+    }
+  }
 
   const refreshAfterRosterChange = async () => {
     if (!user) return
+    const studentQuery = getDocs(collection(db, 'students'))
     const [classesSnap, invitesSnap, activeSnap] = await Promise.all([
-      getDocs(query(collection(db, 'classes'), where('teacherId', '==', user.uid))),
+      getDocs(collection(db, 'classes')),
       getDocs(query(collection(db, 'invitations'), where('teacherId', '==', user.uid))),
-      getDocs(query(collection(db, 'students'), where('teacherId', '==', user.uid))),
+      studentQuery,
     ])
-    const classRows = classesSnap.docs.map(d => ({ id: d.id, ...d.data() }))
-    const activeStudentIds = new Set(activeSnap.docs.map((d) => d.id))
-    const normalizedClasses = await reconcileClassesWithActiveStudents(classRows, activeStudentIds)
+    const classRows = classesSnap.docs.map(d => ({ id: d.id, ...d.data() })).filter((cls) => belongsToEnvironment(cls) && classBelongsToTeacher(cls))
+    const activeDocs = activeSnap.docs.filter((d) => belongsToEnvironment(d.data()))
+    const normalizedClasses = await reconcileClassesWithActiveStudents(classRows)
     setClasses(normalizedClasses)
     const studentMap = {}
-    activeSnap.docs.forEach((d) => { studentMap[d.id] = { id: d.id, kind: 'active', ...d.data() } })
+    activeDocs.forEach((d) => { studentMap[d.id] = { id: d.id, kind: 'active', ...d.data() } })
     invitesSnap.docs.forEach((d) => {
       const data = d.data()
+      if (!belongsToEnvironment(data)) return
       if (data.status === 'used') return
       studentMap[`invite:${d.id}`] = { id: `invite:${d.id}`, inviteId: d.id, kind: 'pending', ...data }
     })
+
+    await Promise.all(normalizedClasses.flatMap((cls) => ([
+      getDocs(query(collection(db, 'students'), where('classId', '==', cls.id))),
+      getDocs(query(collection(db, 'students'), where('classIds', 'array-contains', cls.id))),
+    ])).map(async (snapshotPromise) => {
+      const snapshot = await snapshotPromise
+      snapshot.docs.forEach((docSnap) => {
+        const data = docSnap.data()
+        if (!belongsToEnvironment(data)) return
+        studentMap[docSnap.id] = { id: docSnap.id, kind: 'active', ...data }
+      })
+    }))
+
+    await Promise.all(normalizedClasses.flatMap((cls) => (cls.studentIds ?? []).map(async (studentId) => {
+      if (studentMap[studentId]) return
+      const studentSnap = await getDoc(doc(db, 'students', studentId))
+      if (studentSnap.exists() && belongsToEnvironment(studentSnap.data())) {
+        studentMap[studentId] = { id: studentSnap.id, kind: 'active', ...studentSnap.data() }
+      }
+    })))
+
     const roster = Object.values(studentMap).sort((a, b) => String(a.email || '').localeCompare(String(b.email || ''), 'pl'))
     setStudents(roster)
     setStats(prev => ({ ...prev, students: roster.length }))
@@ -165,7 +341,7 @@ export default function TeacherDashboard() {
     setStudentError('')
     try {
       const existingInvites = await getDocs(query(collection(db, 'invitations'), where('email', '==', email)))
-      const hasTeacherInvite = existingInvites.docs.some((d) => d.data()?.teacherId === user.uid && d.data()?.status !== 'used')
+      const hasTeacherInvite = existingInvites.docs.some((d) => d.data()?.teacherId === user.uid && d.data()?.status !== 'used' && belongsToEnvironment(d.data()))
       if (hasTeacherInvite) {
         setStudentError('Ten uczeń jest już na Twojej liście oczekujących.')
         setStudentLoading(false)
@@ -180,6 +356,7 @@ export default function TeacherDashboard() {
         lastName,
         teacherId: user.uid,
         classId,
+        environmentId,
         code,
         status: 'pending',
         emailStatus: 'queued',
@@ -195,6 +372,7 @@ export default function TeacherDashboard() {
         classId,
         className: selectedClass?.name || '',
         teacherId: user.uid,
+        environmentId,
         teacherName: auth.currentUser?.displayName || `${teacherProfile?.firstName || ''} ${teacherProfile?.lastName || ''}`.trim() || 'Nauczyciel',
         invitationId: inviteRef.id,
         code,
@@ -217,19 +395,21 @@ export default function TeacherDashboard() {
 
     try {
       if (student.kind === 'pending') {
-        await updateDoc(doc(db, 'invitations', student.inviteId), { classId: nextClassId || '' })
+        await updateDoc(doc(db, 'invitations', student.inviteId), { classId: nextClassId || '', environmentId })
       } else {
         if (!nextClassId) {
           await updateDoc(doc(db, 'students', student.id), {
             classId: '',
             classIds: [],
             teacherId: user.uid,
+            environmentId,
           })
         } else {
           await updateDoc(doc(db, 'students', student.id), {
             classId: nextClassId,
             classIds: arrayUnion(nextClassId),
             teacherId: user.uid,
+            environmentId,
           })
           await updateDoc(doc(db, 'classes', nextClassId), { studentIds: arrayUnion(student.id) })
         }
@@ -264,13 +444,13 @@ export default function TeacherDashboard() {
 
         const invitesByStudentSnap = await getDocs(query(collection(db, 'invitations'), where('studentId', '==', student.id)))
         await Promise.all(invitesByStudentSnap.docs
-          .filter((inviteDoc) => inviteDoc.data()?.teacherId === user.uid)
+          .filter((inviteDoc) => inviteDoc.data()?.teacherId === user.uid && belongsToEnvironment(inviteDoc.data()))
           .map((inviteDoc) => deleteDoc(doc(db, 'invitations', inviteDoc.id))))
 
         if (student.email) {
           const invitesByEmailSnap = await getDocs(query(collection(db, 'invitations'), where('email', '==', String(student.email).toLowerCase())))
           await Promise.all(invitesByEmailSnap.docs
-            .filter((inviteDoc) => inviteDoc.data()?.teacherId === user.uid)
+            .filter((inviteDoc) => inviteDoc.data()?.teacherId === user.uid && belongsToEnvironment(inviteDoc.data()))
             .map((inviteDoc) => deleteDoc(doc(db, 'invitations', inviteDoc.id))))
         }
 
@@ -288,7 +468,7 @@ export default function TeacherDashboard() {
 
   const handleLogout = async () => {
     await signOut(auth)
-    navigate('/login')
+    navigate(buildPath('/login'))
   }
 
   const firstName = teacherProfile?.firstName ?? ''
@@ -299,6 +479,29 @@ export default function TeacherDashboard() {
     const email = String(student.email || '').toLowerCase()
     return fullName.includes(normalizedStudentQuery) || email.includes(normalizedStudentQuery)
   })
+  const classSubjectLabelFull = (cls) => Array.isArray(cls?.subjects) && cls.subjects.length > 0
+    ? cls.subjects.map((subject) => subject.name).filter(Boolean).join(', ')
+    : (cls?.subject || (cls?.homeroomTeacherId === user?.uid ? 'Wychowawca' : 'brak przedmiotów'))
+
+  const classSubjectLabelForViewer = (cls) => {
+    if (isEnvironmentAdmin) return classSubjectLabelFull(cls)
+
+    const subjects = Array.isArray(cls?.subjects) ? cls.subjects : []
+    if (subjects.length > 0) {
+      const teacherSubjects = subjects
+        .filter((subject) => subject?.teacherId === user?.uid)
+        .map((subject) => String(subject?.name || '').trim())
+        .filter(Boolean)
+
+      if (teacherSubjects.length > 0) return teacherSubjects.join(', ')
+      if (cls?.homeroomTeacherId === user?.uid) return classSubjectLabelFull(cls)
+      return 'brak przedmiotów'
+    }
+
+    if (cls?.teacherId === user?.uid) return cls?.subject || 'brak przedmiotów'
+    if (cls?.homeroomTeacherId === user?.uid) return cls?.subject || 'Wychowawca'
+    return 'brak przedmiotów'
+  }
 
   return (
     <div className="app-shell">
@@ -321,11 +524,21 @@ export default function TeacherDashboard() {
             </p>
           </div>
           <div className="hero-actions">
-            <button className="btn btn-light" onClick={() => navigate('/teacher/lessons')}>
+            {isEnvironmentAdmin && (
+              <>
+                <button className={`btn ${panelMode === 'teacher' ? 'btn-primary' : 'btn-light'}`} onClick={() => setPanelMode('teacher')}>
+                  Tryb nauczyciela
+                </button>
+                <button className={`btn ${panelMode === 'admin' ? 'btn-primary' : 'btn-light'}`} onClick={() => setPanelMode('admin')}>
+                  Tryb admina
+                </button>
+              </>
+            )}
+            <button className="btn btn-light" onClick={() => navigate(buildPath('/teacher/lessons'))}>
               <BookOpen size={17} />
               Lista lekcji
             </button>
-            <button className="btn btn-light" onClick={() => navigate('/teacher/record')}>
+            <button className="btn btn-light" onClick={() => navigate(buildPath('/teacher/record'))}>
               <Mic size={17} />
               Nagraj lekcję
             </button>
@@ -335,6 +548,94 @@ export default function TeacherDashboard() {
             </button>
           </div>
         </section>
+
+        {isEnvironmentAdmin && panelMode === 'admin' && (
+          <section className="ui-card" style={s.adminPanel}>
+            <div style={s.adminHeader}>
+              <div>
+                <p className="eyebrow">Admin środowiska</p>
+                <h2 className="section-title" style={{ margin: 0 }}>Zarządzanie szkołą</h2>
+                <p style={s.adminHint}>Dodawaj nauczycieli i klasy tylko w tym środowisku.</p>
+              </div>
+              <span style={s.adminBadge}>{envTeachers.length} nauczycieli · {envClasses.length} klas</span>
+            </div>
+
+            {adminMsg && <p style={{ ...s.adminMsg, color: adminMsg.startsWith('✅') ? '#166534' : '#b91c1c' }}>{adminMsg}</p>}
+
+            <div style={s.adminGrid}>
+              <form onSubmit={handleCreateEnvironmentTeacher} style={s.adminBox}>
+                <h3 style={s.adminBoxTitle}>Nowy nauczyciel</h3>
+                <input style={s.input} placeholder="Imię" value={adminTeacherForm.firstName} onChange={(event) => setAdminTeacherForm(prev => ({ ...prev, firstName: event.target.value }))} />
+                <input style={s.input} placeholder="Nazwisko" value={adminTeacherForm.lastName} onChange={(event) => setAdminTeacherForm(prev => ({ ...prev, lastName: event.target.value }))} />
+                <input style={s.input} placeholder="Email" value={adminTeacherForm.email} onChange={(event) => setAdminTeacherForm(prev => ({ ...prev, email: event.target.value }))} />
+                <input style={s.input} type="password" placeholder="Hasło startowe" value={adminTeacherForm.password} onChange={(event) => setAdminTeacherForm(prev => ({ ...prev, password: event.target.value }))} />
+                <input style={s.input} placeholder="Przedmioty po przecinku" value={adminTeacherForm.subjectsText} onChange={(event) => setAdminTeacherForm(prev => ({ ...prev, subjectsText: event.target.value }))} />
+                <button className="btn btn-primary" disabled={adminLoading}>{adminLoading ? 'Zapisywanie...' : 'Dodaj nauczyciela'}</button>
+              </form>
+
+              <form onSubmit={handleCreateEnvironmentClass} style={s.adminBox}>
+                <h3 style={s.adminBoxTitle}>Nowa klasa</h3>
+                <input style={s.input} placeholder="Nazwa klasy, np. 2A" value={adminClassForm.name} onChange={(event) => setAdminClassForm(prev => ({ ...prev, name: event.target.value }))} />
+                <select style={s.input} value={adminClassForm.homeroomTeacherId} onChange={(event) => setAdminClassForm(prev => ({ ...prev, homeroomTeacherId: event.target.value }))}>
+                  <option value="">Wychowawca opcjonalnie</option>
+                  {envTeachers.map(teacher => <option key={teacher.id} value={teacher.id}>{displayUserName(teacher)} — {teacherSubjectNames(teacher)}</option>)}
+                </select>
+                <button className="btn btn-primary" disabled={adminLoading}>{adminLoading ? 'Zapisywanie...' : 'Dodaj klasę'}</button>
+              </form>
+            </div>
+
+            <div style={s.adminListPanel}>
+              <div style={s.adminListHeader}>
+                <h3 style={s.adminBoxTitle}>Istniejące klasy</h3>
+                <span style={s.adminListCount}>{envClasses.length}</span>
+              </div>
+              <div style={s.adminTeacherList}>
+                {envClasses.length === 0 && <p style={s.emptyAdminList}>Brak klas w tym środowisku.</p>}
+                {envClasses.map((cls) => {
+                  const homeroom = envTeachers.find((teacher) => teacher.id === cls.homeroomTeacherId)
+                  return (
+                    <div key={cls.id} style={s.adminTeacherRow}>
+                      <div style={s.teacherAvatar}>{String(cls.name || '?').slice(0, 1).toUpperCase()}</div>
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <p style={s.teacherName}>{cls.name || 'Klasa bez nazwy'}</p>
+                        <p style={s.teacherMeta}>Wychowawca: {homeroom ? displayUserName(homeroom) : cls.homeroomTeacherName || 'nie przypisano'}</p>
+                        <p style={s.teacherMeta}>Przedmioty: {classSubjectLabelFull(cls)}</p>
+                        <p style={s.teacherMeta}>Uczniowie: {(cls.studentIds || []).length}</p>
+                      </div>
+                    </div>
+                  )
+                })}
+              </div>
+            </div>
+
+            <div style={s.adminListPanel}>
+              <div style={s.adminListHeader}>
+                <h3 style={s.adminBoxTitle}>Istniejący nauczyciele</h3>
+                <span style={s.adminListCount}>{envTeachers.length}</span>
+              </div>
+              <div style={s.adminTeacherList}>
+                {envTeachers.length === 0 && <p style={s.emptyAdminList}>Brak nauczycieli w tym środowisku.</p>}
+                {envTeachers.map((teacher) => {
+                  const teacherClasses = envClasses.filter((cls) => cls.homeroomTeacherId === teacher.id || cls.teacherId === teacher.id || (cls.subjects || []).some((subject) => subject.teacherId === teacher.id))
+                  return (
+                    <div key={teacher.id} style={s.adminTeacherRow}>
+                      <div style={s.teacherAvatar}>{displayUserName(teacher)[0]?.toUpperCase() || '?'}</div>
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <p style={s.teacherName}>{displayUserName(teacher)}</p>
+                        <p style={s.teacherMeta}>{teacher.email || 'brak emaila'}</p>
+                        <p style={s.teacherMeta}>Przedmioty: {teacherSubjectNames(teacher)}</p>
+                        <p style={s.teacherMeta}>Klasy: {teacherClasses.length ? teacherClasses.map((cls) => cls.name).join(', ') : 'brak przypisanych klas'}</p>
+                      </div>
+                    </div>
+                  )
+                })}
+              </div>
+            </div>
+          </section>
+        )}
+
+        {panelMode === 'teacher' && (
+          <>
 
         <div className="stats-grid">
           <div className="ui-card stat-card">
@@ -349,7 +650,7 @@ export default function TeacherDashboard() {
           </div>
           <div className="ui-card stat-card">
             <img src={aiRecommendationsImg} alt="" style={s.statArt} loading="lazy" />
-            <span className="stat-value">{classes.length}</span>
+            <span className="stat-value">{isEnvironmentAdmin ? envClasses.length : classes.length}</span>
             <span className="stat-label">Klasy</span>
           </div>
         </div>
@@ -380,11 +681,11 @@ export default function TeacherDashboard() {
               <div
                 key={cls.id}
                 className="ui-card action-card"
-                onClick={() => navigate(`/teacher/class/${cls.id}`)}
+                onClick={() => navigate(buildPath(`/teacher/class/${cls.id}`))}
               >
                 <span className="badge badge-progress"><School size={14} /> Klasa</span>
                 <div className="card-title" style={{ marginTop: 14 }}>{cls.name}</div>
-                <div className="card-meta">{cls.subject}</div>
+                <div className="card-meta">{classSubjectLabelForViewer(cls)}</div>
                 <div className="card-meta" style={{ color: 'var(--color-primary)', fontWeight: 800 }}>
                   <Users size={14} style={{ verticalAlign: -2, marginRight: 5 }} />
                   {studentsLabel(cls.studentIds?.length ?? 0)}
@@ -448,7 +749,7 @@ export default function TeacherDashboard() {
                   <div style={{ minWidth: 0, flex: 1 }}>
                     <button
                       style={s.studentNameBtn}
-                      onClick={() => student.kind === 'active' && navigate(`/teacher/student/${student.id}`)}
+                      onClick={() => student.kind === 'active' && navigate(buildPath(`/teacher/student/${student.id}`))}
                       disabled={student.kind !== 'active'}
                     >
                       {fullName}
@@ -467,7 +768,7 @@ export default function TeacherDashboard() {
                     onChange={(event) => handleAssignStudent(student, event.target.value)}
                   >
                     <option value="">Bez klasy</option>
-                    {classes.map((cls) => <option key={cls.id} value={cls.id}>{cls.name} — {cls.subject}</option>)}
+                    {classes.map((cls) => <option key={cls.id} value={cls.id}>{cls.name} — {classSubjectLabelForViewer(cls)}</option>)}
                   </select>
                   {deleteStudentId === student.id ? (
                     <span style={s.confirmInline}>
@@ -483,6 +784,8 @@ export default function TeacherDashboard() {
             })}
           </div>
         )}
+          </>
+        )}
       </main>
 
       {showStudentModal && (
@@ -495,7 +798,7 @@ export default function TeacherDashboard() {
             <input style={s.input} placeholder="Email ucznia" value={studentForm.email} onChange={(event) => setStudentForm(prev => ({ ...prev, email: event.target.value }))} />
             <select style={s.input} value={studentForm.classId} onChange={(event) => setStudentForm(prev => ({ ...prev, classId: event.target.value }))}>
               <option value="">Bez klasy na razie</option>
-              {classes.map((cls) => <option key={cls.id} value={cls.id}>{cls.name} — {cls.subject}</option>)}
+              {classes.map((cls) => <option key={cls.id} value={cls.id}>{cls.name} — {classSubjectLabelForViewer(cls)}</option>)}
             </select>
             {studentError && <p style={s.modalError}>{studentError}</p>}
             <div style={s.modalBtns}>
@@ -531,6 +834,23 @@ const s = {
   classCount: { fontSize: 13, color: '#2563eb', fontWeight: 500 },
   hint: { color: '#9ca3af', fontSize: 14 },
   statArt: { width: 54, height: 54, objectFit: 'contain', float: 'right', marginLeft: 10, marginBottom: 8 },
+  adminPanel: { padding: 18, marginBottom: 20, border: '1px solid #bfdbfe', background: 'linear-gradient(180deg, #ffffff 0%, #f8fbff 100%)' },
+  adminHeader: { display: 'flex', justifyContent: 'space-between', gap: 12, alignItems: 'flex-start', flexWrap: 'wrap', marginBottom: 14 },
+  adminHint: { margin: '6px 0 0', color: '#64748b', fontSize: 13, lineHeight: 1.5 },
+  adminBadge: { borderRadius: 999, padding: '6px 10px', background: '#eff6ff', border: '1px solid #bfdbfe', color: '#1d4ed8', fontSize: 12, fontWeight: 800 },
+  adminMsg: { margin: '0 0 12px', fontSize: 13, fontWeight: 700 },
+  adminGrid: { display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))', gap: 12 },
+  adminBox: { border: '1px solid #e2e8f0', borderRadius: 14, padding: 14, background: '#fff' },
+  adminBoxTitle: { margin: '0 0 10px', color: '#0f172a', fontSize: 15, fontWeight: 900 },
+  adminListPanel: { marginTop: 14, border: '1px solid #e2e8f0', borderRadius: 14, background: '#fff', padding: 14 },
+  adminListHeader: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, marginBottom: 10 },
+  adminListCount: { minWidth: 28, height: 28, display: 'inline-grid', placeItems: 'center', borderRadius: 999, background: '#f1f5f9', color: '#0f172a', fontSize: 12, fontWeight: 900 },
+  adminTeacherList: { display: 'grid', gap: 10, maxHeight: 320, overflowY: 'auto', paddingRight: 4 },
+  adminTeacherRow: { display: 'flex', gap: 10, alignItems: 'flex-start', border: '1px solid #edf2f7', borderRadius: 12, padding: 10, background: '#fbfdff' },
+  teacherAvatar: { width: 36, height: 36, borderRadius: 10, display: 'grid', placeItems: 'center', background: '#dbeafe', color: '#1d4ed8', fontWeight: 900, flex: '0 0 auto' },
+  teacherName: { margin: 0, color: '#0f172a', fontSize: 14, fontWeight: 900 },
+  teacherMeta: { margin: '3px 0 0', color: '#64748b', fontSize: 12, lineHeight: 1.45, overflowWrap: 'anywhere' },
+  emptyAdminList: { margin: 0, color: '#64748b', fontSize: 13 },
   searchWrap: { padding: 12, marginBottom: 12 },
   searchInput: { width: '100%', border: '1px solid #cbd5e1', borderRadius: 10, padding: '10px 12px', fontSize: 14, outline: 'none', boxSizing: 'border-box', color: '#0f172a' },
   studentRow: { padding: 14, display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' },

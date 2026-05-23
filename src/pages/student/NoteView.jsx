@@ -5,6 +5,7 @@ import ReactMarkdown from 'react-markdown'
 import { doc, getDoc } from 'firebase/firestore'
 import { db } from '../../firebase'
 import { useAuth } from '../../contexts/AuthContext'
+import { useEnvironment } from '../../contexts/EnvironmentContext'
 import IllustrationState from '../../components/IllustrationState'
 import { sanitizeGeneratedText } from '../../utils/contentSanitizer'
 
@@ -92,6 +93,7 @@ const N8N_EXERCISE_CHECK_URL = 'https://n8n.yourwayai.pl/webhook/eduflow-check-e
 export default function NoteView() {
   const { taskId } = useParams()
   const { user } = useAuth()
+  const { buildPath } = useEnvironment()
   const navigate = useNavigate()
   const location = useLocation()
   const shouldPlayUnlock = Boolean(location.state?.justUnlocked)
@@ -259,7 +261,7 @@ export default function NoteView() {
     return (
       <div style={s.page}>
         <header style={s.header}>
-          <button style={s.backBtn} onClick={() => navigate('/student')}>← Wróć</button>
+          <button style={s.backBtn} onClick={() => navigate(buildPath('/student'))}>← Wróć</button>
           <Logo height={26} />
           <span style={s.badge}>🔒 Zablokowane</span>
         </header>
@@ -270,7 +272,7 @@ export default function NoteView() {
               title="Najpierw rozwiąż quiz"
               text="Notatka odblokuje się automatycznie po ukończeniu quizu z tej lekcji."
               action={
-                <button className="btn btn-primary" onClick={() => navigate(`/student/lesson/${taskId}`)}>
+                <button className="btn btn-primary" onClick={() => navigate(buildPath(`/student/lesson/${taskId}`))}>
                   Przejdź do quizu
                 </button>
               }
@@ -330,7 +332,7 @@ export default function NoteView() {
   return (
     <div style={s.page}>
       <header style={s.header}>
-        <button style={s.backBtn} onClick={() => navigate('/student')}>← Wróć</button>
+        <button style={s.backBtn} onClick={() => navigate(buildPath('/student'))}>← Wróć</button>
         <Logo height={26} />
         <span style={s.badge}>✅ Zaliczone</span>
       </header>

@@ -5,6 +5,7 @@ import ReactMarkdown from 'react-markdown'
 import { doc, getDoc } from 'firebase/firestore'
 import { db } from '../../firebase'
 import { useAuth } from '../../contexts/AuthContext'
+import { useEnvironment } from '../../contexts/EnvironmentContext'
 import IllustrationState from '../../components/IllustrationState'
 import { sanitizeGeneratedText } from '../../utils/contentSanitizer'
 
@@ -100,6 +101,7 @@ const markdownComponents = {
 export default function MaterialView() {
   const { materialId } = useParams()
   const { user } = useAuth()
+  const { buildPath } = useEnvironment()
   const navigate = useNavigate()
   const [material, setMaterial] = useState(null)
   const [loading, setLoading] = useState(true)
@@ -159,7 +161,7 @@ export default function MaterialView() {
   return (
     <div style={s.page}>
       <header style={s.header}>
-        <button style={s.backBtn} onClick={() => navigate('/student')}>← Wróć</button>
+        <button style={s.backBtn} onClick={() => navigate(buildPath('/student'))}>← Wróć</button>
         <Logo height={26} />
         <span style={s.badge}>Materiały</span>
       </header>

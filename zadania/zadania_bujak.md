@@ -166,7 +166,7 @@ student_profiles/ {studentId, weaknesses: [], aiRecommendation, lessonsCompleted
 - [x] **Design statusu wysyłki do AI** — odświeżony komunikat i estetyczny blok „Przetwarzanie lekcji przez AI”.
 - [x] **Edycja notatek/opisu przez nauczyciela** — nauczyciel może edytować treść opisu lekcji z poziomu profilu lekcji.
 - [x] **Login: duplikowane logo** — zostaje tylko białe logo po lewej.
-- [ ] **Subdomeny (multi-tenant)** — osobne subdomeny dla szkół/kółek/korepetycji.
+- [x] **Subdomeny (multi-tenant)** — osobne subdomeny dla szkół/kółek/korepetycji.
 - [x] **Pierwsze logowanie ucznia (kod/hasło) po refreshu** — nadal zdarzają się przypadki konta aktywnego bez ustawionego hasła; wymaga dalszej stabilizacji flow.
 - [x] **Loading screen po odświeżeniu** — dodać ładny ekran ładowania przy inicjalizacji sesji.
 - [x] **Przejrzystość quizu** — widok numeracji pytań typu „Pytanie 7/9”.
@@ -178,3 +178,6 @@ student_profiles/ {studentId, weaknesses: [], aiRecommendation, lessonsCompleted
 - [x] **Quiz: oczekiwanie na analizę ostatniej odpowiedzi** — gdy nie ma następnego pytania, pokaż komunikat „Poczekaj na analizę do końca” zamiast kończyć flow za wcześnie.
 - [x] **Ostatnie pytanie quizu** — poprawka: quiz domyka się poprawnie, pytanie znika po zakończeniu.
 - [x] **„Napisy stworzone przez społeczność Amara.org”** — sporadyczny artefakt w treści; zidentyfikować źródło i odfiltrować.
+- [ ] PWA
+- [] Amplitude - Analityka
+ 
