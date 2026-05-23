@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="192" height="192" viewBox="0 0 192 192" role="img" aria-label="EduFlow icon">
+  <defs>
+    <linearGradient id="g" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#2563eb"/>
+      <stop offset="100%" stop-color="#14b8a6"/>
+    </linearGradient>
+  </defs>
+  <rect width="192" height="192" rx="40" fill="url(#g)"/>
+  <g fill="#ffffff">
+    <path d="M45 54a7 7 0 0 1 7-7h34c8.5 0 16.8 2.8 23.5 8l2.5 2V141l-5.2-3.9A29.8 29.8 0 0 0 86 131H52a7 7 0 0 1-7-7V54zm102 0a7 7 0 0 0-7-7h-34c-8.5 0-16.8 2.8-23.5 8l-2.5 2V141l5.2-3.9A29.8 29.8 0 0 1 106 131h34a7 7 0 0 0 7-7V54z"/>
+    <circle cx="146" cy="46" r="18"/>
+    <path d="M145 36h2v20h-2zM136 45h20v2h-20z" fill="#14b8a6"/>
+  </g>
+</svg>

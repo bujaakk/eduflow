@@ -1,7 +1,9 @@
-import { Routes, Route, Navigate } from 'react-router-dom'
+import { useEffect } from 'react'
+import { Routes, Route, Navigate, useLocation } from 'react-router-dom'
 import { AuthProvider } from './contexts/AuthContext'
-import { EnvironmentProvider } from './contexts/EnvironmentContext'
+import { EnvironmentProvider, useEnvironment } from './contexts/EnvironmentContext'
 import PrivateRoute from './components/PrivateRoute'
+import { initAnalytics, trackPageView } from './services/analytics'
 import Login from './pages/Login'
 import Admin from './pages/Admin'
 import TeacherDashboard from './pages/teacher/Dashboard'
@@ -20,7 +22,22 @@ import MyProfile from './pages/student/MyProfile'
 const T = ({ children }) => <PrivateRoute role="teacher">{children}</PrivateRoute>
 const S = ({ children }) => <PrivateRoute role="student">{children}</PrivateRoute>
 
+function EnvironmentRedirect({ to }) {
+  const { buildPath } = useEnvironment()
+  return <Navigate to={buildPath(to)} replace />
+}
+
 export default function App() {
+  const location = useLocation()
+
+  useEffect(() => {
+    initAnalytics()
+  }, [])
+
+  useEffect(() => {
+    trackPageView(location.pathname, location.search)
+  }, [location.pathname, location.search])
+
   return (
     <EnvironmentProvider>
       <AuthProvider>
@@ -37,6 +54,7 @@ export default function App() {
         <Route path="/teacher/record" element={<T><RecordLesson /></T>} />
         <Route path="/e/:environmentSlug/teacher/record" element={<T><RecordLesson /></T>} />
         <Route path="/teacher/record/mobile" element={<MobileRecordLesson />} />
+        <Route path="/e/:environmentSlug/teacher/record/mobile" element={<MobileRecordLesson />} />
         <Route path="/teacher/lessons" element={<T><LessonList /></T>} />
         <Route path="/e/:environmentSlug/teacher/lessons" element={<T><LessonList /></T>} />
         <Route path="/teacher/lesson/:lessonId" element={<T><LessonProfile /></T>} />
@@ -56,7 +74,7 @@ export default function App() {
         <Route path="/student/profile" element={<S><MyProfile /></S>} />
         <Route path="/e/:environmentSlug/student/profile" element={<S><MyProfile /></S>} />
 
-        <Route path="*" element={<Navigate to="/login" replace />} />
+        <Route path="*" element={<EnvironmentRedirect to="/login" />} />
       </Routes>
       </AuthProvider>
     </EnvironmentProvider>

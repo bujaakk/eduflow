@@ -3,6 +3,7 @@ import { onAuthStateChanged } from 'firebase/auth'
 import { doc, getDoc } from 'firebase/firestore'
 import { auth, db } from '../firebase'
 import Logo from '../components/Logo'
+import { identifyUser, clearAnalyticsUser, initAnalytics, trackEvent } from '../services/analytics'
 
 const AuthContext = createContext(null)
 
@@ -27,12 +28,20 @@ export function AuthProvider({ children }) {
       try {
         if (firebaseUser) {
           setUser(firebaseUser)
+          initAnalytics()
           const teacherDoc = await getDoc(doc(db, 'teachers', firebaseUser.uid))
           if (teacherDoc.exists()) {
             setRole('teacher')
-            setTeacherProfile(teacherDoc.data())
+            const teacherData = teacherDoc.data()
+            setTeacherProfile(teacherData)
             setStudentProfile(null)
             setPasswordSetupRequired(false)
+            identifyUser(firebaseUser, 'teacher', teacherData)
+            trackEvent('auth_login', {
+              role: 'teacher',
+              uid: firebaseUser.uid,
+              environmentId: teacherData?.environmentId || null,
+            })
             return
           }
 
@@ -43,6 +52,12 @@ export function AuthProvider({ children }) {
           setTeacherProfile(null)
           setStudentProfile(studentData)
           setPasswordSetupRequired(studentData?.passwordSet === false && hasPendingPasswordSetup(firebaseUser.uid))
+          identifyUser(firebaseUser, 'student', studentData)
+          trackEvent('auth_login', {
+            role: 'student',
+            uid: firebaseUser.uid,
+            environmentId: studentData?.environmentId || null,
+          })
           return
         }
 
@@ -51,6 +66,8 @@ export function AuthProvider({ children }) {
         setTeacherProfile(null)
         setStudentProfile(null)
         setPasswordSetupRequired(false)
+        trackEvent('auth_logout')
+        clearAnalyticsUser()
       } catch {
         // Firestore chwilowo niedostepny (np. opóźnienie sieci przy hard refresh).
         // NIE czyść user — sesja Firebase Auth musi przetrwać.

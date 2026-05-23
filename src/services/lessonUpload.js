@@ -18,7 +18,18 @@ export class UploadLessonError extends Error {
 const getAudioFileName = (blob) => {
   const mime = (blob?.type || '').toLowerCase()
   if (mime.includes('mpeg') || mime.includes('mp3')) return 'lesson.mp3'
+  if (mime.includes('mp4') || mime.includes('m4a') || mime.includes('aac')) return 'lesson.m4a'
+  if (mime.includes('ogg')) return 'lesson.ogg'
+  if (mime.includes('wav')) return 'lesson.wav'
   return 'lesson.webm'
+}
+
+const getBinaryFieldNames = (value) => {
+  if (!Array.isArray(value) || value.length === 0) return ['data', 'audio', 'file']
+  const names = value
+    .map((item) => String(item || '').trim())
+    .filter(Boolean)
+  return names.length > 0 ? names : ['data', 'audio', 'file']
 }
 
 const parseResponseBody = async (response) => {
@@ -47,6 +58,15 @@ const normalizeMessage = (payload, fallback) => {
     if (typeof payload.error === 'string' && payload.error.trim()) return payload.error
     if (typeof payload.reason === 'string' && payload.reason.trim()) return payload.reason
 
+    if (Array.isArray(payload.detail) && payload.detail.length > 0) {
+      const first = payload.detail[0]
+      if (typeof first === 'string' && first.trim()) return first
+      if (first && typeof first === 'object') {
+        if (typeof first.msg === 'string' && first.msg.trim()) return first.msg
+        if (typeof first.message === 'string' && first.message.trim()) return first.message
+      }
+    }
+
     const debug = payload.debug
     if (debug && typeof debug === 'object') {
       const bits = []
@@ -55,6 +75,13 @@ const normalizeMessage = (payload, fallback) => {
       if (typeof debug.studentIdsCount === 'number') bits.push(`studentIdsCount=${debug.studentIdsCount}`)
       if (typeof debug.tasksCreated === 'number') bits.push(`tasksCreated=${debug.tasksCreated}`)
       if (bits.length > 0) return `${fallback} (${bits.join(', ')})`
+    }
+
+    try {
+      const raw = JSON.stringify(payload)
+      if (raw && raw !== '{}') return raw.slice(0, 500)
+    } catch {
+      // Fall through to the generic fallback below.
     }
   }
   return fallback
@@ -70,8 +97,10 @@ export async function uploadLesson(audioBlob, classId, options = {}) {
   const remoteAudioUrl = typeof options.remoteAudioUrl === 'string' ? options.remoteAudioUrl.trim() : ''
   const remoteStoragePath = typeof options.remoteStoragePath === 'string' ? options.remoteStoragePath.trim() : ''
   const hasRemoteAudio = Boolean(remoteAudioUrl)
+  const preferRemoteAudio = options.preferRemoteAudio !== false
+  const shouldSendBlob = hasBlob && (!hasRemoteAudio || !preferRemoteAudio)
 
-  if (!hasBlob && !hasRemoteAudio) {
+  if (!shouldSendBlob && !hasRemoteAudio) {
     throw new UploadLessonError('invalid_audio', 'Brak nagrania audio do wysłania.')
   }
 
@@ -80,12 +109,13 @@ export async function uploadLesson(audioBlob, classId, options = {}) {
   }
 
   const formData = new FormData()
-  if (hasBlob) {
+  if (shouldSendBlob) {
     const fileName = getAudioFileName(audioBlob)
-    // Keep backward compatibility with different n8n parsers expecting different field names.
-    formData.append('data', audioBlob, fileName)
-    formData.append('audio', audioBlob, fileName)
-    formData.append('file', audioBlob, fileName)
+    const mime = audioBlob?.type || ''
+    getBinaryFieldNames(options.binaryFieldNames).forEach((fieldName) => {
+      formData.append(fieldName, audioBlob, fileName)
+    })
+    if (mime) formData.append('audioMimeType', mime)
   }
   if (hasRemoteAudio) {
     formData.append('audioUrl', remoteAudioUrl)
@@ -121,6 +151,10 @@ export async function uploadLesson(audioBlob, classId, options = {}) {
     const payload = await parseResponseBody(response)
 
     if (!response.ok) {
+      console.error('EduFlow audio webhook failed', {
+        status: response.status,
+        payload,
+      })
       throw new UploadLessonError(
         'http_error',
         normalizeMessage(payload, `Błąd uploadu (${response.status}).`),

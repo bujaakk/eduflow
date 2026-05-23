@@ -31,6 +31,24 @@ const PROMPTS = [
 ]
 
 const REQUEST_TIMEOUT_MS = 45000
+const DESKTOP_MIME_CANDIDATES = [
+  'audio/mp4',
+  'audio/webm',
+  'audio/webm;codecs=opus',
+  'audio/ogg;codecs=opus',
+]
+
+const pickSupportedDesktopMimeType = () => {
+  if (typeof window === 'undefined' || !window.MediaRecorder?.isTypeSupported) return ''
+  return DESKTOP_MIME_CANDIDATES.find((type) => window.MediaRecorder.isTypeSupported(type)) || ''
+}
+
+const normalizeRecordedAudioType = (mimeType) => {
+  const type = String(mimeType || '').toLowerCase()
+  if (type.includes('mp4') || type.includes('m4a') || type.includes('aac')) return 'audio/mp4'
+  if (type.includes('ogg')) return 'audio/ogg'
+  return 'audio/webm'
+}
 
 const getUploadErrorMessage = (error, fallback) => {
   if (!error) return fallback
@@ -39,23 +57,57 @@ const getUploadErrorMessage = (error, fallback) => {
 }
 
 const extractTranscript = (payload) => {
+  const normalizeToken = (value) =>
+    String(value || '')
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .toUpperCase()
+      .replace(/[^A-Z0-9]/g, '')
+
+  const isTerminalMarker = (value) => {
+    const token = normalizeToken(value)
+    return token === 'KONIEC' || token === 'END' || token === 'DONE' || token === 'STOP'
+  }
+
+  const extractFromValue = (value) => {
+    if (typeof value === 'string') {
+      const cleaned = sanitizeGeneratedText(value)
+      if (!cleaned) return ''
+      return isTerminalMarker(cleaned) ? '' : cleaned
+    }
+    return extractTranscript(value)
+  }
+
   if (!payload) return ''
-  if (typeof payload === 'string') return sanitizeGeneratedText(payload)
+  if (typeof payload === 'string') {
+    const cleaned = sanitizeGeneratedText(payload)
+    if (!cleaned) return ''
+    return isTerminalMarker(cleaned) ? '' : cleaned
+  }
   if (Array.isArray(payload)) {
     return payload.map((item) => extractTranscript(item)).filter(Boolean).join('\n').trim()
   }
   if (typeof payload === 'object') {
-    const direct = payload.transcript || payload.text || payload.result || payload.output
-    if (typeof direct === 'string' && direct.trim()) return sanitizeGeneratedText(direct)
-
-    if (Array.isArray(direct) || typeof direct === 'object') {
-      const nestedDirect = extractTranscript(direct)
-      if (nestedDirect) return nestedDirect
+    const preferredKeys = ['transcript', 'transcription', 'transcriptText', 'text']
+    for (const key of preferredKeys) {
+      if (!(key in payload)) continue
+      const resolved = extractFromValue(payload[key])
+      if (resolved) return resolved
     }
 
-    const nested = payload.data || payload.response || payload.body
-    const nestedText = extractTranscript(nested)
-    if (nestedText) return nestedText
+    const genericKeys = ['result', 'output']
+    for (const key of genericKeys) {
+      if (!(key in payload)) continue
+      const resolved = extractFromValue(payload[key])
+      if (resolved) return resolved
+    }
+
+    const nestedKeys = ['data', 'response', 'body']
+    for (const key of nestedKeys) {
+      if (!(key in payload)) continue
+      const nestedText = extractTranscript(payload[key])
+      if (nestedText) return nestedText
+    }
   }
   return ''
 }
@@ -155,13 +207,15 @@ export default function RecordLesson() {
   const handleStart = async () => {
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
-      const recorder = new MediaRecorder(stream)
+      const mimeType = pickSupportedDesktopMimeType()
+      const recorder = mimeType ? new MediaRecorder(stream, { mimeType }) : new MediaRecorder(stream)
       mediaRecorderRef.current = recorder
       chunksRef.current = []
 
       recorder.ondataavailable = e => chunksRef.current.push(e.data)
       recorder.onstop = () => {
-        const blob = new Blob(chunksRef.current, { type: 'audio/webm' })
+        const finalType = normalizeRecordedAudioType(recorder.mimeType || mimeType)
+        const blob = new Blob(chunksRef.current, { type: finalType })
         setAudioBlob(blob)
         setReviewAudioBlob(blob)
         setReviewAudioUrl(URL.createObjectURL(blob))
@@ -233,6 +287,49 @@ export default function RecordLesson() {
     return { remoteAudioUrl: audioUrl, remoteStoragePath: storagePath }
   }
 
+  const uploadLessonWithDesktopFallback = async (blob, classId, uploadOptions) => {
+    if (reviewSource === 'desktop' && blob instanceof Blob) {
+      const { remoteAudioUrl, remoteStoragePath, extraFields, ...binaryUploadOptions } = uploadOptions
+
+      return uploadLesson(blob, classId, {
+        ...binaryUploadOptions,
+        preferRemoteAudio: false,
+        binaryFieldNames: ['data'],
+        extraFields: {
+          ...extraFields,
+          source: reviewSource,
+          sourceOriginal: reviewSource,
+        },
+      })
+    }
+
+    try {
+      return await uploadLesson(blob, classId, {
+        ...uploadOptions,
+        preferRemoteAudio: true,
+      })
+    } catch (error) {
+      const shouldRetryWithBlob =
+        blob instanceof Blob &&
+        Number(error?.status) === 422
+
+      if (!shouldRetryWithBlob) throw error
+
+      const { remoteAudioUrl, remoteStoragePath, extraFields, ...binaryUploadOptions } = uploadOptions
+
+      return uploadLesson(blob, classId, {
+        ...binaryUploadOptions,
+        preferRemoteAudio: false,
+        binaryFieldNames: ['data'],
+        extraFields: {
+          ...extraFields,
+          source: reviewSource,
+          sourceOriginal: reviewSource,
+        },
+      })
+    }
+  }
+
   const handleGenerateTranscript = async () => {
     setTranscriptionError('')
     setTranscriptionInfo('')
@@ -241,15 +338,12 @@ export default function RecordLesson() {
       const blob = await resolveReviewBlob()
       if ((!blob && !reviewAudioUrl) || !selectedClass) return
 
-      let remoteAudioUrl = reviewSource === 'mobile_qr' ? reviewAudioUrl : ''
-      let remoteStoragePath = reviewSource === 'mobile_qr' ? reviewAudioPath : ''
-      if (reviewSource === 'desktop' && blob) {
-        const remote = await ensureDesktopRemoteAudio(blob)
-        remoteAudioUrl = remote.remoteAudioUrl
-        remoteStoragePath = remote.remoteStoragePath
-      }
+      const remoteAudioUrl = reviewSource === 'mobile_qr' ? reviewAudioUrl : ''
+      const remoteStoragePath = reviewSource === 'mobile_qr' ? reviewAudioPath : ''
 
-      const responsePayload = await uploadLesson(blob, selectedClass, {
+      const webhookSource = reviewSource === 'desktop' ? 'mobile_qr' : reviewSource
+
+      const responsePayload = await uploadLessonWithDesktopFallback(blob, selectedClass, {
         timeoutMs: REQUEST_TIMEOUT_MS,
         remoteAudioUrl,
         remoteStoragePath,
@@ -258,7 +352,8 @@ export default function RecordLesson() {
           workflowStep: 'transcribe_only',
           waitForApproval: 'true',
           executeAutomation: 'false',
-          source: reviewSource,
+          source: webhookSource,
+          sourceOriginal: reviewSource,
           className: selectedClassMeta?.name ?? '',
           classSubject: selectedSubjectName,
           environmentId,
@@ -308,22 +403,20 @@ export default function RecordLesson() {
         return
       }
 
-      let remoteAudioUrl = reviewSource === 'mobile_qr' ? reviewAudioUrl : ''
-      let remoteStoragePath = reviewSource === 'mobile_qr' ? reviewAudioPath : ''
-      if (reviewSource === 'desktop' && blob) {
-        const remote = await ensureDesktopRemoteAudio(blob)
-        remoteAudioUrl = remote.remoteAudioUrl
-        remoteStoragePath = remote.remoteStoragePath
-      }
+      const remoteAudioUrl = reviewSource === 'mobile_qr' ? reviewAudioUrl : ''
+      const remoteStoragePath = reviewSource === 'mobile_qr' ? reviewAudioPath : ''
 
-      const responsePayload = await uploadLesson(blob, selectedClass, {
+      const webhookSource = reviewSource === 'desktop' ? 'mobile_qr' : reviewSource
+
+      const responsePayload = await uploadLessonWithDesktopFallback(blob, selectedClass, {
         timeoutMs: REQUEST_TIMEOUT_MS,
         remoteAudioUrl,
         remoteStoragePath,
         extraFields: {
           transcript: cleanTranscript,
           approvedByTeacher: 'true',
-          source: reviewSource,
+          source: webhookSource,
+          sourceOriginal: reviewSource,
           mode: 'process',
           workflowStep: 'approve_and_process',
           waitForApproval: 'false',

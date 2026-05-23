@@ -38,7 +38,9 @@ export default function AdminPanel() {
   const [authed, setAuthed] = useState(() => sessionStorage.getItem(SESSION_KEY) === '1')
   const [pw, setPw] = useState('')
   const [pwError, setPwError] = useState('')
-  const [tab, setTab] = useState('environments') // 'environments' | 'users'
+  const [tab, setTab] = useState('environments') // 'environments' | 'users' | 'analytics'
+  const amplitudeDashboardUrl = import.meta.env.VITE_AMPLITUDE_DASHBOARD_URL || ''
+  const amplitudeEmbedUrl = import.meta.env.VITE_AMPLITUDE_EMBED_URL || amplitudeDashboardUrl
 
   const [environments, setEnvironments] = useState([])
   const [appUsers, setAppUsers] = useState([])
@@ -775,10 +777,10 @@ export default function AdminPanel() {
 
         {/* Zakładki */}
         <div style={s.tabs}>
-          {['environments', 'users'].map(t => (
+          {['environments', 'users', 'analytics'].map(t => (
             <button key={t} style={{ ...s.tabBtn, ...(tab === t ? s.tabActive : {}) }} onClick={() => setTab(t)}>
-              <span style={s.tabIcon}>{t === 'environments' ? '🌐' : '👥'}</span>
-              {t === 'environments' ? 'Środowiska' : 'Użytkownicy'}
+              <span style={s.tabIcon}>{t === 'environments' ? '🌐' : t === 'users' ? '👥' : '📈'}</span>
+              {t === 'environments' ? 'Środowiska' : t === 'users' ? 'Użytkownicy' : 'Analityka'}
             </button>
           ))}
         </div>
@@ -1125,6 +1127,39 @@ export default function AdminPanel() {
           </>
         )}
 
+        {tab === 'analytics' && (
+          <>
+            <div style={s.card}>
+              <div style={s.cardHeaderBlock}>
+                <div>
+                  <p style={s.sectionEyebrow}>Amplitude</p>
+                  <h2 style={s.cardTitle}>Podgląd analityki</h2>
+                </div>
+                {amplitudeDashboardUrl && (
+                  <a href={amplitudeDashboardUrl} target="_blank" rel="noreferrer" style={s.linkBtn}>Otwórz w Amplitude</a>
+                )}
+              </div>
+
+              {!amplitudeEmbedUrl ? (
+                <p style={s.hint}>
+                  Dodaj URL dashboardu do <strong>VITE_AMPLITUDE_DASHBOARD_URL</strong> lub URL embed do <strong>VITE_AMPLITUDE_EMBED_URL</strong> w pliku .env,
+                  aby wyświetlić podgląd tutaj.
+                </p>
+              ) : (
+                <div style={s.analyticsFrameWrap}>
+                  <iframe
+                    title="Amplitude Analytics"
+                    src={amplitudeEmbedUrl}
+                    style={s.analyticsFrame}
+                    loading="lazy"
+                    referrerPolicy="strict-origin-when-cross-origin"
+                  />
+                </div>
+              )}
+            </div>
+          </>
+        )}
+
         {/* ===== NAUCZYCIELE ===== */}
         {tab === 'teachers' && (
           <>
@@ -1328,6 +1363,7 @@ const s = {
   cardHeaderBlock: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12, marginBottom: 16, flexWrap: 'wrap' },
   sectionEyebrow: { margin: 0, color: '#2563eb', fontSize: 11, fontWeight: 900, textTransform: 'uppercase', letterSpacing: '.08em' },
   softBadge: { border: '1px solid #bfdbfe', color: '#1d4ed8', background: '#eff6ff', borderRadius: 999, padding: '6px 10px', fontSize: 12, fontWeight: 900 },
+  linkBtn: { display: 'inline-flex', alignItems: 'center', justifyContent: 'center', textDecoration: 'none', border: '1px solid #bfdbfe', color: '#1d4ed8', background: '#eff6ff', borderRadius: 999, padding: '8px 12px', fontSize: 12, fontWeight: 900 },
   cardTitle: { fontSize: 18, fontWeight: 900, color: '#0f172a', margin: '3px 0 0' },
   formRow: { display: 'flex', gap: 10, flexWrap: 'wrap', alignItems: 'center' },
   input: { padding: '9px 13px', fontSize: 14, border: '1px solid #d1d5db', borderRadius: 8, outline: 'none', flex: '1 1 160px', minWidth: 0 },
@@ -1376,4 +1412,6 @@ const s = {
   rowMeta: { fontSize: 12, color: '#6b7280', margin: 0 },
   deleteBtn: { padding: '6px 12px', fontSize: 12, fontWeight: 500, background: '#fef2f2', color: '#dc2626', border: '1px solid #fecaca', borderRadius: 6, cursor: 'pointer', whiteSpace: 'nowrap' },
   iconBtn: { padding: '6px 12px', fontSize: 12, fontWeight: 500, background: '#f9fafb', color: '#374151', border: '1px solid #e5e7eb', borderRadius: 6, cursor: 'pointer', whiteSpace: 'nowrap' },
+  analyticsFrameWrap: { width: '100%', border: '1px solid #e2e8f0', borderRadius: 12, overflow: 'hidden', background: '#fff' },
+  analyticsFrame: { display: 'block', width: '100%', minHeight: 620, border: 'none', background: '#fff' },
 }

@@ -59,7 +59,7 @@ export function EnvironmentProvider({ children }) {
   const [loading, setLoading] = useState(true)
   const pathSlug = readPathSlug()
   const hostSlug = readHostSlug()
-  const selectedSlug = pathSlug || hostSlug || readStoredSlug() || 'default'
+  const selectedSlug = pathSlug || hostSlug || 'default'
 
   useEffect(() => {
     let cancelled = false
@@ -95,10 +95,11 @@ export function EnvironmentProvider({ children }) {
   }, [selectedSlug])
 
   const value = useMemo(() => {
-    const usePathPrefix = !!pathSlug && environment.slug && environment.slug !== 'default'
+    const prefixSlug = pathSlug || (environment.slug && environment.slug !== 'default' ? environment.slug : '')
+    const usePathPrefix = !!prefixSlug && prefixSlug !== 'default'
     const buildPath = (path) => {
       const normalizedPath = path.startsWith('/') ? path : `/${path}`
-      return usePathPrefix ? `/e/${environment.slug}${normalizedPath}` : normalizedPath
+      return usePathPrefix ? `/e/${prefixSlug}${normalizedPath}` : normalizedPath
     }
 
     return {

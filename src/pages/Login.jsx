@@ -444,13 +444,12 @@ function getErrorMessage(code) {
     case 'auth/user-not-found':
     case 'auth/wrong-password':
     case 'auth/invalid-credential':
+    case 'auth/too-many-requests':
       return 'Nieprawidłowy email lub hasło.'
     case 'auth/email-already-in-use':
       return 'Ten email jest już zajęty.'
     case 'auth/weak-password':
       return 'Hasło jest za słabe (min. 6 znaków).'
-    case 'auth/too-many-requests':
-      return 'Za dużo prób. Spróbuj za chwilę.'
     default:
       return 'Wystąpił błąd. Spróbuj ponownie.'
   }

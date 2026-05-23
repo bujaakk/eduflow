@@ -178,6 +178,6 @@ student_profiles/ {studentId, weaknesses: [], aiRecommendation, lessonsCompleted
 - [x] **Quiz: oczekiwanie na analizę ostatniej odpowiedzi** — gdy nie ma następnego pytania, pokaż komunikat „Poczekaj na analizę do końca” zamiast kończyć flow za wcześnie.
 - [x] **Ostatnie pytanie quizu** — poprawka: quiz domyka się poprawnie, pytanie znika po zakończeniu.
 - [x] **„Napisy stworzone przez społeczność Amara.org”** — sporadyczny artefakt w treści; zidentyfikować źródło i odfiltrować.
-- [ ] PWA
-- [] Amplitude - Analityka
+- [x] PWA
+- [x] Amplitude - Analityka
  
