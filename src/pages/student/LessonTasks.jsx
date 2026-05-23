@@ -1,7 +1,7 @@
 import Logo from '../../components/Logo'
 import { useEffect, useRef, useState } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
-import { doc, getDoc, addDoc, updateDoc, collection, serverTimestamp, onSnapshot, increment } from 'firebase/firestore'
+import { doc, getDoc, updateDoc, serverTimestamp, onSnapshot, increment } from 'firebase/firestore'
 import { auth, db } from '../../firebase'
 import { useAuth } from '../../contexts/AuthContext'
 import IllustrationState from '../../components/IllustrationState'
@@ -180,6 +180,7 @@ export default function LessonTasks() {
   const safeIndex = Math.min(Math.max(currentIndex, 0), Math.max(totalQuestions - 1, 0))
   const currentQuestion = task?.questions?.[safeIndex] ?? ''
   const progress = totalQuestions > 0 ? Math.round((Math.min(effectiveAnsweredCount, totalQuestions) / totalQuestions) * 100) : 0
+  const waitingForFinalAnalysis = !isTaskCompleted && totalQuestions > 0 && effectiveAnsweredCount >= totalQuestions && pendingSubmissions > 0
 
   useEffect(() => {
     if (isTaskCompleted) return undefined
@@ -266,23 +267,6 @@ export default function LessonTasks() {
         setSubmitError(result?.reason || `Nie udało się ocenić pytania ${submittedIndex + 1}.`)
         return
       }
-
-      await addDoc(collection(db, 'answers'), {
-        taskId,
-        studentId: user.uid,
-        lessonId,
-        questionIndex: submittedIndex,
-        question: submittedQuestion,
-        content: submittedAnswer,
-        knowledgeLevel: Number(result.knowledgeLevel ?? 0),
-        coverageLevel: Number(result.coverageLevel ?? 0),
-        understandingLevel: Number(result.understandingLevel ?? 0),
-        confidence: Number(result.confidence ?? 0),
-        feedback: result.feedback || '',
-        nextLearningStep: result.nextLearningStep || '',
-        evaluatedAt: serverTimestamp(),
-        timestamp: serverTimestamp(),
-      })
 
       const minAnswered = Math.min(total, submittedIndex + 1)
       const nextAnsweredCount = typeof result.answeredCount === 'number'
@@ -420,6 +404,18 @@ export default function LessonTasks() {
               />
               <p style={s.countdownText}>Przekierowanie za {redirectCountdown} s</p>
               <button style={s.finishBtn} onClick={goToLessonNote}>Przejdź teraz</button>
+            </div>
+          </section>
+        ) : waitingForFinalAnalysis ? (
+          <section style={s.finishSection}>
+            <div style={s.finishCard}>
+              <IllustrationState
+                type="noTasks"
+                title="Poczekaj na analizę do końca"
+                text="Ostatnia odpowiedź została wysłana. AI kończy sprawdzanie, a notatka odblokuje się automatycznie za chwilę."
+              />
+              <p style={s.pendingInfo}>⏳ Trwa ocenianie ostatniej odpowiedzi</p>
+              {!!submitError && <p style={s.errorText}>❌ {submitError}</p>}
             </div>
           </section>
         ) : (

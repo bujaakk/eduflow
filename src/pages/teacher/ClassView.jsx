@@ -9,6 +9,7 @@ import { db } from '../../firebase'
 import { useAuth } from '../../contexts/AuthContext'
 import IllustrationState from '../../components/IllustrationState'
 import { sanitizeGeneratedText } from '../../utils/contentSanitizer'
+import { uploadPdfMaterial } from '../../services/pdfMaterialUpload'
 
 const toDateValue = (value) => {
   if (!value) return null
@@ -75,6 +76,12 @@ const formatDisplayTitle = (title, number) => {
   return `Lekcja ${number} - ${cleanTitle}`
 }
 
+const isMaterialLesson = (lesson) => {
+  const type = String(lesson?.type || lesson?.source || '').toLowerCase()
+  const category = String(lesson?.category || '').toLowerCase()
+  return type.includes('material') || type.includes('pdf') || category.includes('material')
+}
+
 const studentsLabel = (count) => `${count} ${count === 1 ? 'uczeń' : 'uczniów'}`
 
 export default function ClassView() {
@@ -86,9 +93,12 @@ export default function ClassView() {
   const [cls, setCls] = useState(null)
   const [students, setStudents] = useState([])
   const [lessons, setLessons] = useState([])
+  const [materials, setMaterials] = useState([])
   const [loading, setLoading] = useState(true)
   const [lessonsLoading, setLessonsLoading] = useState(true)
-  const initialTab = searchParams.get('tab') === 'lessons' ? 'lessons' : 'students'
+  const [materialsLoading, setMaterialsLoading] = useState(true)
+  const requestedTab = searchParams.get('tab')
+  const initialTab = ['students', 'lessons', 'materials'].includes(requestedTab) ? requestedTab : 'students'
   const [activeTab, setActiveTab] = useState(initialTab)
   const [pageError, setPageError] = useState('')
 
@@ -104,18 +114,25 @@ export default function ClassView() {
   const [lessonError, setLessonError] = useState('')
   const [lessonDeleteLoadingId, setLessonDeleteLoadingId] = useState('')
   const [confirmDeleteLessonId, setConfirmDeleteLessonId] = useState('')
+  const [showMaterialModal, setShowMaterialModal] = useState(false)
+  const [pdfUploadTarget, setPdfUploadTarget] = useState('material')
+  const [materialForm, setMaterialForm] = useState({ title: '', file: null })
+  const [materialLoading, setMaterialLoading] = useState(false)
+  const [materialError, setMaterialError] = useState('')
+  const [materialInfo, setMaterialInfo] = useState('')
 
   const [confirmDelete, setConfirmDelete] = useState(null)
 
   useEffect(() => {
-    const tab = searchParams.get('tab') === 'lessons' ? 'lessons' : 'students'
+    const requested = searchParams.get('tab')
+    const tab = ['students', 'lessons', 'materials'].includes(requested) ? requested : 'students'
     if (tab !== activeTab) setActiveTab(tab)
   }, [searchParams, activeTab])
 
   const handleTabChange = (tab) => {
     setActiveTab(tab)
-    if (tab === 'lessons') {
-      setSearchParams({ tab: 'lessons' })
+    if (tab !== 'students') {
+      setSearchParams({ tab })
       return
     }
     setSearchParams({})
@@ -191,9 +208,21 @@ export default function ClassView() {
       setPageError('Nie udało się załadować lekcji dla tej klasy.')
     })
 
+    const materialsQuery = query(collection(db, 'materials'), where('classId', '==', classId))
+    const unsubMaterials = onSnapshot(materialsQuery, (snap) => {
+      const list = snap.docs.map(d => ({ id: d.id, ...d.data(), sourceCollection: 'materials' }))
+      list.sort((a, b) => dateToUnix(b.timestamp || b.createdAt) - dateToUnix(a.timestamp || a.createdAt))
+      setMaterials(list)
+      setMaterialsLoading(false)
+    }, () => {
+      setMaterialsLoading(false)
+      setPageError('Nie udało się załadować materiałów dla tej klasy.')
+    })
+
     return () => {
       unsubClass()
       unsubLessons()
+      unsubMaterials()
     }
   }, [classId])
 
@@ -280,6 +309,32 @@ export default function ClassView() {
     }
   }
 
+  const handleUploadMaterial = async () => {
+    if (!materialForm.file) {
+      setMaterialError('Wybierz plik PDF.')
+      return
+    }
+
+    setMaterialLoading(true)
+    setMaterialError('')
+    setMaterialInfo('')
+    try {
+      const title = materialForm.title.trim() || materialForm.file.name.replace(/\.pdf$/i, '')
+      const result = await uploadPdfMaterial(materialForm.file, { ...cls, id: classId }, { title, target: pdfUploadTarget })
+      const message = result?.payload?.message || (pdfUploadTarget === 'lesson'
+        ? 'PDF wysłany do AI. Lekcja pojawi się w zakładce Lekcje po zapisaniu przez n8n.'
+        : 'PDF wysłany do AI. Materiał pojawi się uczniom po zapisaniu notatki przez n8n.')
+      setMaterialInfo(message)
+      setMaterialForm({ title: '', file: null })
+      setShowMaterialModal(false)
+      handleTabChange(pdfUploadTarget === 'lesson' ? 'lessons' : 'materials')
+    } catch (err) {
+      setMaterialError(err?.message || 'Nie udało się wysłać PDF do AI.')
+    } finally {
+      setMaterialLoading(false)
+    }
+  }
+
   const handleRemoveStudent = async (studentId) => {
     try {
       await updateDoc(doc(db, 'classes', classId), {
@@ -328,6 +383,22 @@ export default function ClassView() {
     }
   }
 
+  const handleDeleteMaterial = async (material) => {
+    if (!material?.id) return
+    setLessonError('')
+    setLessonDeleteLoadingId(material.id)
+
+    try {
+      await deleteDoc(doc(db, 'materials', material.id))
+      setMaterials((prev) => prev.filter((item) => item.id !== material.id))
+      setConfirmDeleteLessonId('')
+    } catch {
+      setLessonError('Nie udało się usunąć materiału. Spróbuj ponownie.')
+    } finally {
+      setLessonDeleteLoadingId('')
+    }
+  }
+
   if (loading) return <div style={s.page}><p style={s.hint}>Ładowanie...</p></div>
   if (!cls) return <div style={s.page}><p style={s.hint}>Nie znaleziono klasy.</p></div>
   const classStudentIds = new Set(students.map((student) => student.id))
@@ -335,6 +406,8 @@ export default function ClassView() {
     .filter((student) => !classStudentIds.has(student.id))
     .sort((a, b) => (`${a.firstName ?? ''} ${a.lastName ?? ''} ${a.email ?? ''}`)
       .localeCompare(`${b.firstName ?? ''} ${b.lastName ?? ''} ${b.email ?? ''}`, 'pl'))
+  const materialRows = materials
+  const lessonRows = lessons.filter((lesson) => !isMaterialLesson(lesson))
 
   return (
     <div className="app-shell">
@@ -350,15 +423,18 @@ export default function ClassView() {
           <div>
             <p className="eyebrow">Klasa</p>
             <h1 className="page-title" style={{ fontSize: 'clamp(28px, 4vw, 40px)' }}>{cls.name}</h1>
-            <p className="page-subtitle">{cls.subject} · {studentsLabel(students.length)} · {lessons.length} lekcji</p>
+            <p className="page-subtitle">{cls.subject} · {studentsLabel(students.length)} · {lessonRows.length} lekcji · {materialRows.length} materiałów</p>
           </div>
           <div className="hero-actions">
             <button className="btn btn-light" onClick={() => setShowLessonModal(true)}>+ Dodaj lekcję</button>
+            <button className="btn btn-light" onClick={() => { setPdfUploadTarget('lesson'); setShowMaterialModal(true) }}>+ PDF jako lekcja</button>
+            <button className="btn btn-light" onClick={() => { setPdfUploadTarget('material'); setShowMaterialModal(true) }}>+ PDF jako materiał</button>
             <button className="btn btn-light" onClick={() => setShowModal(true)}>+ Przypisz ucznia</button>
           </div>
         </section>
 
         {pageError && <div className="ui-card" style={{ padding: 14, color: '#dc2626', marginBottom: 12 }}>{pageError}</div>}
+        {materialInfo && <div className="ui-card" style={s.successBox}>{materialInfo}</div>}
 
         <div style={s.tabWrap}>
           <button className={`btn ${activeTab === 'students' ? 'btn-primary' : 'btn-secondary'}`} onClick={() => handleTabChange('students')}>
@@ -366,6 +442,9 @@ export default function ClassView() {
           </button>
           <button className={`btn ${activeTab === 'lessons' ? 'btn-primary' : 'btn-secondary'}`} onClick={() => handleTabChange('lessons')}>
             Lekcje
+          </button>
+          <button className={`btn ${activeTab === 'materials' ? 'btn-primary' : 'btn-secondary'}`} onClick={() => handleTabChange('materials')}>
+            Materiały
           </button>
         </div>
 
@@ -432,12 +511,13 @@ export default function ClassView() {
               <h2 style={s.subTitle}>Lekcje klasy</h2>
               <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
                 <button className="btn btn-secondary" onClick={() => navigate('/teacher/record')}>Nagraj lekcję</button>
+                <button className="btn btn-secondary" onClick={() => { setPdfUploadTarget('lesson'); setShowMaterialModal(true) }}>PDF jako lekcja</button>
                 <button className="btn btn-primary" onClick={() => setShowLessonModal(true)}>Dodaj lekcję</button>
               </div>
             </div>
             {lessonsLoading ? (
               <p className="empty-state">Ładowanie lekcji...</p>
-            ) : lessons.length === 0 ? (
+            ) : lessonRows.length === 0 ? (
               <IllustrationState
                 type="noLessons"
                 title="Brak lekcji w tej klasie"
@@ -445,14 +525,15 @@ export default function ClassView() {
                 action={(
                   <>
                     <button className="btn btn-secondary" onClick={() => navigate('/teacher/record')}>Nagraj lekcję</button>
+                    <button className="btn btn-secondary" onClick={() => { setPdfUploadTarget('lesson'); setShowMaterialModal(true) }}>PDF jako lekcja</button>
                     <button className="btn btn-primary" onClick={() => setShowLessonModal(true)}>Dodaj lekcję</button>
                   </>
                 )}
               />
             ) : (
               <div style={s.lessonList}>
-                {lessons.map(lesson => {
-                  const lessonNumber = lessons
+                {lessonRows.map(lesson => {
+                  const lessonNumber = lessonRows
                     .slice()
                     .sort((a, b) => lessonToUnix(a) - lessonToUnix(b))
                     .findIndex((item) => item.id === lesson.id) + 1
@@ -498,6 +579,85 @@ export default function ClassView() {
                             disabled={lessonDeleteLoadingId === lesson.id}
                           >
                             Usuń lekcję
+                          </button>
+                        )}
+                      </div>
+                    </article>
+                  )
+                })}
+              </div>
+            )}
+          </section>
+        )}
+
+        {activeTab === 'materials' && (
+          <section className="ui-card" style={{ padding: 18 }}>
+            <div style={s.lessonHeader}>
+              <div>
+                <h2 style={s.subTitle}>Materiały klasy</h2>
+                <p style={s.meta}>PDF-y opracowane przez AI i widoczne dla uczniów w sekcji „Materiały”.</p>
+              </div>
+              <button className="btn btn-primary" onClick={() => { setPdfUploadTarget('material'); setShowMaterialModal(true) }}>PDF jako materiał</button>
+            </div>
+            {materialsLoading ? (
+              <p className="empty-state">Ładowanie materiałów...</p>
+            ) : materialRows.length === 0 ? (
+              <IllustrationState
+                type="noLessons"
+                title="Brak materiałów w tej klasie"
+                text="Wrzuć PDF, a AI przygotuje notatkę dla uczniów w osobnej kategorii Materiały."
+                action={<button className="btn btn-primary" onClick={() => { setPdfUploadTarget('material'); setShowMaterialModal(true) }}>PDF jako materiał</button>}
+              />
+            ) : (
+              <div style={s.lessonList}>
+                {materialRows.map(material => {
+                  const materialDate = resolveLessonDate(material)
+                  const previewText = lessonPreview(material)
+                  const isProcessing = material.processingStatus === 'processing' || material.status === 'processing'
+
+                  return (
+                    <article
+                      key={material.id}
+                      className="ui-card"
+                      style={{ ...s.lessonCard, cursor: 'default' }}
+                    >
+                      <div style={s.materialTopRow}>
+                        <span style={s.materialTitle}>
+                          {material.title || 'Materiał PDF'}
+                        </span>
+                        <span style={isProcessing ? s.pendingMaterialBadge : s.readyMaterialBadge}>
+                          {isProcessing ? 'AI przygotowuje' : 'Gotowe'}
+                        </span>
+                      </div>
+                      {previewText && <p style={s.meta}>{previewText}</p>}
+                      <p style={s.meta}>Data: {formatDateTime(materialDate)}</p>
+                      {material.fileName && <p style={s.meta}>Plik: {material.fileName}</p>}
+                      <div style={{ marginTop: 8 }}>
+                        {confirmDeleteLessonId === material.id ? (
+                          <span style={{ fontSize: 13 }}>
+                            Usunąć materiał?{' '}
+                            <button
+                              style={s.dangerBtn}
+                              onClick={(e) => { e.stopPropagation(); handleDeleteMaterial(material) }}
+                              disabled={lessonDeleteLoadingId === material.id}
+                            >
+                              {lessonDeleteLoadingId === material.id ? 'Usuwanie...' : 'Tak'}
+                            </button>{' '}
+                            <button
+                              style={s.cancelBtn}
+                              onClick={(e) => { e.stopPropagation(); setConfirmDeleteLessonId('') }}
+                              disabled={lessonDeleteLoadingId === material.id}
+                            >
+                              Nie
+                            </button>
+                          </span>
+                        ) : (
+                          <button
+                            style={s.deleteBtn}
+                            onClick={(e) => { e.stopPropagation(); setConfirmDeleteLessonId(material.id) }}
+                            disabled={lessonDeleteLoadingId === material.id}
+                          >
+                            Usuń materiał
                           </button>
                         )}
                       </div>
@@ -583,6 +743,45 @@ export default function ClassView() {
           </div>
         </div>
       )}
+
+      {/* Modal PDF */}
+      {showMaterialModal && (
+        <div style={s.overlay} onClick={() => !materialLoading && setShowMaterialModal(false)}>
+          <div style={s.modal} onClick={e => e.stopPropagation()}>
+            <h2 style={s.modalTitle}>{pdfUploadTarget === 'lesson' ? 'PDF jako lekcja' : 'PDF jako materiał'}</h2>
+            <p style={s.modalHint}>
+              {pdfUploadTarget === 'lesson'
+                ? 'AI przeanalizuje PDF i utworzy z niego lekcję dla klasy wraz z treścią do dalszego flow.'
+                : 'AI przeanalizuje PDF i utworzy zwykły materiał dodatkowy dla uczniów, bez tworzenia lekcji.'}
+            </p>
+            <input
+              type="text"
+              placeholder={pdfUploadTarget === 'lesson' ? 'Tytuł lekcji (opcjonalnie)' : 'Tytuł materiału (opcjonalnie)'}
+              value={materialForm.title}
+              onChange={e => setMaterialForm(prev => ({ ...prev, title: e.target.value }))}
+              style={s.input}
+              disabled={materialLoading}
+            />
+            <input
+              type="file"
+              accept="application/pdf,.pdf"
+              onChange={e => setMaterialForm(prev => ({ ...prev, file: e.target.files?.[0] || null }))}
+              style={{ ...s.input, marginTop: 10 }}
+              disabled={materialLoading}
+            />
+            {materialForm.file && <p style={s.modalHint}>Wybrano: {materialForm.file.name}</p>}
+            {materialError && <p style={s.error}>{materialError}</p>}
+            <div style={s.modalBtns}>
+              <button style={s.cancelModalBtn} onClick={() => { setShowMaterialModal(false); setMaterialForm({ title: '', file: null }); setMaterialError('') }} disabled={materialLoading}>
+                Anuluj
+              </button>
+              <button style={s.primaryBtn} onClick={handleUploadMaterial} disabled={materialLoading || !materialForm.file}>
+                {materialLoading ? 'Wysyłanie do AI...' : (pdfUploadTarget === 'lesson' ? 'Utwórz lekcję z PDF' : 'Utwórz materiał z PDF')}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }
@@ -600,8 +799,13 @@ const s = {
   lessonHeader: { display: 'flex', justifyContent: 'space-between', gap: 10, alignItems: 'center', flexWrap: 'wrap', marginBottom: 12 },
   lessonList: { display: 'grid', gap: 10 },
   lessonCard: { padding: 14, borderRadius: 14, border: '1px solid #dbe3f1', cursor: 'pointer' },
+  successBox: { padding: 14, color: '#166534', marginBottom: 12, background: '#f0fdf4', border: '1px solid #bbf7d0' },
   lessonTitle: { fontSize: 16, fontWeight: 700, color: '#0f172a', marginBottom: 6 },
   lessonLink: { background: 'none', border: 'none', color: '#0f172a', cursor: 'pointer', fontSize: 16, fontWeight: 800, marginBottom: 6, padding: 0, textAlign: 'left' },
+  materialTitle: { color: '#0f172a', fontSize: 16, fontWeight: 800, marginBottom: 6 },
+  materialTopRow: { display: 'flex', justifyContent: 'space-between', gap: 12, alignItems: 'flex-start' },
+  readyMaterialBadge: { flexShrink: 0, borderRadius: 999, padding: '5px 10px', background: '#dcfce7', color: '#166534', fontSize: 12, fontWeight: 800 },
+  pendingMaterialBadge: { flexShrink: 0, borderRadius: 999, padding: '5px 10px', background: '#fef3c7', color: '#92400e', fontSize: 12, fontWeight: 800 },
   subTitle: { fontSize: 20, fontWeight: 800, color: '#0f172a', margin: 0 },
   primaryBtn: { background: '#2563eb', color: '#fff', border: 'none', borderRadius: 8, padding: '10px 18px', cursor: 'pointer', fontWeight: 600, fontSize: 14 },
   hint: { color: '#9ca3af', fontSize: 14 },

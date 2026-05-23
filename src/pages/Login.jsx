@@ -6,6 +6,7 @@ import { useNavigate } from 'react-router-dom'
 import {
   createUserWithEmailAndPassword,
   signInWithEmailAndPassword,
+  signOut,
   updatePassword,
 } from 'firebase/auth'
 import {
@@ -22,6 +23,30 @@ import {
 } from 'firebase/firestore'
 import { auth, db } from '../firebase'
 
+function markPasswordSetupPending(uid) {
+  try {
+    window.localStorage.setItem(`eduflow-password-setup:${uid}`, 'pending')
+  } catch {
+    // no-op
+  }
+}
+
+function clearPasswordSetupPending(uid) {
+  try {
+    window.localStorage.removeItem(`eduflow-password-setup:${uid}`)
+  } catch {
+    // no-op
+  }
+}
+
+function hasPendingPasswordSetup(uid) {
+  try {
+    return window.localStorage.getItem(`eduflow-password-setup:${uid}`) === 'pending'
+  } catch {
+    return false
+  }
+}
+
 // Widok: 'login' | 'code' | 'setPassword'
 export default function Login() {
   const [view, setView] = useState('login')
@@ -37,16 +62,28 @@ export default function Login() {
       const currentUser = auth.currentUser
       if (!currentUser) return
       try {
+        const teacherSnap = await getDoc(doc(db, 'teachers', currentUser.uid))
+        if (teacherSnap.exists()) {
+          navigate('/teacher', { replace: true })
+          return
+        }
+
         const studentSnap = await getDoc(doc(db, 'students', currentUser.uid))
-        if (studentSnap.exists() && studentSnap.data().passwordSet === false) {
+        if (!studentSnap.exists()) {
+          setError('Konto ucznia nie jest jeszcze aktywne. Zaloguj się kodem zaproszenia lub skontaktuj się z nauczycielem.')
+          await signOut(auth)
+          return
+        }
+
+        const studentData = studentSnap.data()
+        if (studentData?.passwordSet === false && hasPendingPasswordSetup(currentUser.uid)) {
           setView('setPassword')
           return
         }
-        // Użytkownik w pełni aktywny — przekieruj do właściwego panelu.
-        const teacherSnap = await getDoc(doc(db, 'teachers', currentUser.uid))
-        navigate(teacherSnap.exists() ? '/teacher' : '/student', { replace: true })
+
+        navigate('/student', { replace: true })
       } catch {
-        // Nie blokuj strony logowania przy błędzie sprawdzania.
+        setError('Nie udało się sprawdzić statusu konta. Odśwież stronę i spróbuj ponownie.')
       }
     }
     checkIncompleteSetup()
@@ -69,13 +106,18 @@ export default function Login() {
         return
       }
       const studentDoc = await getDoc(doc(db, 'students', credential.user.uid))
-      if (studentDoc.exists() && studentDoc.data().passwordSet === false) {
+      if (!studentDoc.exists()) {
+        setError('Konto ucznia nie jest jeszcze aktywne. Użyj kodu zaproszenia przy pierwszym logowaniu.')
+        await signOut(auth)
+        return
+      }
+      if (studentDoc.data().passwordSet === false && hasPendingPasswordSetup(credential.user.uid)) {
         setView('setPassword')
         return
       }
       navigate('/student')
     } catch (err) {
-      setError(getErrorMessage(err.code))
+      setError(err?.code ? getErrorMessage(err.code) : 'Logowanie nie powiodło się. Spróbuj ponownie.')
     } finally {
       setLoading(false)
     }
@@ -175,6 +217,7 @@ export default function Login() {
           usedAt: serverTimestamp(),
         })
         // Przejdź do ustawienia własnego hasła
+        markPasswordSetupPending(credential.user.uid)
         setView('setPassword')
       } else if (invitation.status === 'used') {
         // Konto aktywowane — sprawdź czy uczeń zdążył już zmienić hasło.
@@ -183,6 +226,7 @@ export default function Login() {
           const credential = await signInWithEmailAndPassword(auth, normalizedEmail, normalizedCode)
           await setDoc(doc(db, 'students', credential.user.uid), { passwordSet: false }, { merge: true })
           // Zalogowanie kodem powiodło się — hasło nie zostało jeszcze zmienione.
+          markPasswordSetupPending(credential.user.uid)
           setView('setPassword')
         } catch {
           // Kod już nie działa jako hasło — uczeń ma własne hasło.
@@ -201,18 +245,16 @@ export default function Login() {
 
   const handleSetPassword = async (e) => {
     e.preventDefault()
+    if (!auth.currentUser) { setError('Sesja wygasła. Zaloguj się ponownie.'); return }
     if (pwValue.length < 6) { setError('Hasło musi mieć co najmniej 6 znaków.'); return }
     if (pwValue !== pwConfirm) { setError('Hasła nie są identyczne.'); return }
     setError('')
     setLoading(true)
     try {
-      await updatePassword(auth.currentUser, pwValue)
-      // Oznacz że hasło zostało już ustawione — zabezpieczenie przed ponownym trafieniem na setPassword.
-      try {
-        await setDoc(doc(db, 'students', auth.currentUser.uid), { passwordSet: true }, { merge: true })
-      } catch {
-        // Nie blokuj nawigacji jeśli zapis się nie udał.
-      }
+      const currentUser = auth.currentUser
+      await updatePassword(currentUser, pwValue)
+      await setDoc(doc(db, 'students', currentUser.uid), { passwordSet: true }, { merge: true })
+      clearPasswordSetupPending(currentUser.uid)
       navigate('/student')
     } catch (err) {
       setError(getErrorMessage(err.code))

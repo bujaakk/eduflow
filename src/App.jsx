@@ -13,6 +13,7 @@ import StudentProfile from './pages/teacher/StudentProfile'
 import StudentDashboard from './pages/student/Dashboard'
 import LessonTasks from './pages/student/LessonTasks'
 import NoteView from './pages/student/NoteView'
+import MaterialView from './pages/student/MaterialView'
 import MyProfile from './pages/student/MyProfile'
 
 const T = ({ children }) => <PrivateRoute role="teacher">{children}</PrivateRoute>
@@ -38,6 +39,7 @@ export default function App() {
         <Route path="/student" element={<S><StudentDashboard /></S>} />
         <Route path="/student/lesson/:taskId" element={<S><LessonTasks /></S>} />
         <Route path="/student/note/:taskId" element={<S><NoteView /></S>} />
+        <Route path="/student/material/:materialId" element={<S><MaterialView /></S>} />
         <Route path="/student/profile" element={<S><MyProfile /></S>} />
 
         <Route path="*" element={<Navigate to="/login" replace />} />

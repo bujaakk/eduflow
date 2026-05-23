@@ -167,6 +167,13 @@ button:disabled {
   content: none;
 }
 
+.student-hero-panel {
+  background:
+    linear-gradient(90deg, rgba(37, 99, 235, .92) 0%, rgba(30, 124, 185, .70) 43%, rgba(15, 118, 110, .16) 100%),
+    url('/src/assets/bg-panel.png') right bottom / cover,
+    var(--color-primary);
+}
+
 .hero-panel > * {
   position: relative;
   z-index: 1;

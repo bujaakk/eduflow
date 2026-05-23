@@ -86,6 +86,23 @@ const renderMarkdown = (text) => {
   })
 }
 
+const dedupeAttempts = (attempts) => {
+  const byQuestion = new Map()
+  attempts.forEach((attempt) => {
+    const key = `${attempt.questionIndex}|${attempt.question.trim().toLowerCase()}`
+    const existing = byQuestion.get(key)
+    const attemptTime = toDateValue(attempt.createdAt)?.getTime() ?? 0
+    const existingTime = toDateValue(existing?.createdAt)?.getTime() ?? 0
+    if (!existing || attemptTime >= existingTime) byQuestion.set(key, attempt)
+  })
+  return [...byQuestion.values()].sort((a, b) => {
+    if (a.questionIndex !== b.questionIndex) return a.questionIndex - b.questionIndex
+    const aTime = toDateValue(a.createdAt)?.getTime() ?? 0
+    const bTime = toDateValue(b.createdAt)?.getTime() ?? 0
+    return aTime - bTime
+  })
+}
+
 export default function LessonProfile() {
   const { lessonId } = useParams()
   const navigate = useNavigate()
@@ -447,7 +464,7 @@ export default function LessonProfile() {
 
     try {
       const answersSnap = await getDocs(query(collection(db, 'answers'), where('taskId', '==', row.id)))
-      const attempts = answersSnap.docs
+      const rawAttempts = answersSnap.docs
         .map((answerDoc) => {
           const data = answerDoc.data() || {}
           return {
@@ -470,6 +487,7 @@ export default function LessonProfile() {
           const bTime = toDateValue(b.createdAt)?.getTime() ?? 0
           return aTime - bTime
         })
+      const attempts = dedupeAttempts(rawAttempts)
 
       const avg = (key) => {
         if (attempts.length === 0) return 0

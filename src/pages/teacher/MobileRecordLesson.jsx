@@ -77,6 +77,7 @@ export default function MobileRecordLesson() {
   const [state, setState] = useState('idle') // idle | recording | uploading | queued | done | error
   const [seconds, setSeconds] = useState(0)
   const [audioBlob, setAudioBlob] = useState(null)
+  const [audioPreviewUrl, setAudioPreviewUrl] = useState('')
   const [audioMimeType, setAudioMimeType] = useState('audio/webm')
   const [mobileError, setMobileError] = useState('')
 
@@ -92,14 +93,20 @@ export default function MobileRecordLesson() {
         return
       }
 
-      const snap = await getDoc(doc(db, 'recordingSessions', sessionId))
-      if (!snap.exists()) {
-        setLoading(false)
-        return
-      }
+      try {
+        const snap = await getDoc(doc(db, 'recordingSessions', sessionId))
+        if (!snap.exists()) {
+          setMobileError('Sesja nagrywania nie istnieje lub wygasla.')
+          setLoading(false)
+          return
+        }
 
-      setSession({ id: snap.id, ...snap.data() })
-      setLoading(false)
+        setSession({ id: snap.id, ...snap.data() })
+      } catch {
+        setMobileError('Nie udalo sie pobrac sesji. Otworz kod QR ponownie.')
+      } finally {
+        setLoading(false)
+      }
     }
 
     loadSession()
@@ -110,9 +117,15 @@ export default function MobileRecordLesson() {
     let disposed = false
 
     const retryPending = async () => {
-      const pending = await loadPendingUpload(sessionId)
-      if (!pending || disposed || !navigator.onLine) return
-      await uploadAudioToSession(pending.blob, pending.seconds)
+      try {
+        const pending = await loadPendingUpload(sessionId)
+        if (!pending || disposed || !navigator.onLine) return
+        await uploadAudioToSession(pending.blob, pending.seconds)
+      } catch {
+        if (!disposed) {
+          setMobileError('Nie udalo sie wznowic lokalnej wysylki. Sprobuj wyslac nagranie ponownie.')
+        }
+      }
     }
 
     retryPending()
@@ -126,6 +139,17 @@ export default function MobileRecordLesson() {
       window.removeEventListener('online', onOnline)
     }
   }, [sessionId, session])
+
+  useEffect(() => {
+    if (!audioBlob) {
+      setAudioPreviewUrl('')
+      return
+    }
+
+    const nextUrl = URL.createObjectURL(audioBlob)
+    setAudioPreviewUrl(nextUrl)
+    return () => URL.revokeObjectURL(nextUrl)
+  }, [audioBlob])
 
   useEffect(() => {
     if (state === 'recording') {
@@ -182,7 +206,11 @@ export default function MobileRecordLesson() {
       setState('error')
       const msg = err?.message ? `Brak dostepu do mikrofonu: ${err.message}` : 'Brak dostepu do mikrofonu na telefonie.'
       setMobileError(msg)
-      await updateSession({ status: 'error', error: msg })
+      try {
+        await updateSession({ status: 'error', error: msg })
+      } catch {
+        // no-op: fallback UI is enough when network/session write fails
+      }
     }
   }
 
@@ -269,7 +297,7 @@ export default function MobileRecordLesson() {
         <div style={s.card}>
           <Logo height={30} />
           <h1 style={s.title}>Nieprawidlowy link</h1>
-          <p style={s.hint}>Otworz kod QR wygenerowany na komputerze.</p>
+          <p style={s.hint}>{mobileError || 'Otworz kod QR wygenerowany na komputerze.'}</p>
         </div>
       </div>
     )
@@ -281,6 +309,7 @@ export default function MobileRecordLesson() {
         <Logo height={30} />
         <h1 style={s.title}>Nagrywanie z telefonu</h1>
         <p style={s.hint}>Po wyslaniu nagrania komputer nauczyciela od razu dostanie audio do odsluchu i zatwierdzenia.</p>
+        {!!mobileError && state !== 'error' && <p style={{ ...s.hint, color: '#dc2626' }}>{mobileError}</p>}
 
         <input
           ref={fileInputRef}
@@ -303,7 +332,7 @@ export default function MobileRecordLesson() {
         {audioBlob && state !== 'done' && state !== 'uploading' && (
           <>
             <p style={{ ...s.hint, color: '#16a34a' }}>Nagranie gotowe ({formatTime(seconds)})</p>
-            <audio controls src={URL.createObjectURL(audioBlob)} style={{ width: '100%', marginBottom: 12 }} />
+            <audio controls src={audioPreviewUrl} style={{ width: '100%', marginBottom: 12 }} />
             <div style={s.row}>
               <button style={s.secondaryBtn} onClick={() => { setAudioBlob(null); setSeconds(0) }}>
                 Nagraj ponownie

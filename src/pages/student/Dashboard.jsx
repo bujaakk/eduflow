@@ -42,6 +42,12 @@ const formatDisplayTitle = (title, number) => {
   return `Lekcja ${number} - ${cleanTitle}`
 }
 
+const isMaterialLesson = (lesson) => {
+  const type = String(lesson?.type || lesson?.source || '').toLowerCase()
+  const category = String(lesson?.category || '').toLowerCase()
+  return type.includes('material') || type.includes('pdf') || category.includes('material')
+}
+
 export default function StudentDashboard() {
   const { user } = useAuth()
   const navigate = useNavigate()
@@ -51,13 +57,16 @@ export default function StudentDashboard() {
   const [tasks, setTasks] = useState([])
   const [lessons, setLessons] = useState({})
   const [classLessons, setClassLessons] = useState([])
+  const [classMaterials, setClassMaterials] = useState([])
   const [loading, setLoading] = useState(true)
+  const [activeStudyTab, setActiveStudyTab] = useState('lessons')
 
   useEffect(() => {
     if (!user) return
 
     let unsubTasks = null
     let unsubClassLessons = null
+    let unsubClassMaterials = null
 
     const fetchBase = async () => {
       const studentSnap = await getDoc(doc(db, 'students', user.uid))
@@ -82,8 +91,17 @@ export default function StudentDashboard() {
       unsubClassLessons = onSnapshot(lessonsQ, (snap) => {
         const classLessonRows = snap.docs
           .map((d) => ({ id: d.id, ...d.data() }))
+          .filter((lesson) => !isMaterialLesson(lesson))
           .sort((a, b) => (b.timestamp?.seconds ?? 0) - (a.timestamp?.seconds ?? 0))
         setClassLessons(classLessonRows)
+      })
+
+      const materialsQ = query(collection(db, 'materials'), where('classId', '==', student.classId))
+      unsubClassMaterials = onSnapshot(materialsQ, (snap) => {
+        const materialRows = snap.docs
+          .map((d) => ({ id: d.id, ...d.data() }))
+          .sort((a, b) => ((b.timestamp || b.createdAt)?.seconds ?? 0) - ((a.timestamp || a.createdAt)?.seconds ?? 0))
+        setClassMaterials(materialRows)
       })
 
       // Real-time listener na zadaniach ucznia
@@ -108,6 +126,7 @@ export default function StudentDashboard() {
     return () => {
       if (typeof unsubTasks === 'function') unsubTasks()
       if (typeof unsubClassLessons === 'function') unsubClassLessons()
+      if (typeof unsubClassMaterials === 'function') unsubClassMaterials()
     }
   }, [user])
 
@@ -137,7 +156,10 @@ export default function StudentDashboard() {
 
   const fallbackLessons = Object.values(lessons)
   const visibleLessons = classLessons.length > 0 ? classLessons : fallbackLessons
+  const materialRows = classMaterials
+  const lessonRows = visibleLessons.filter((lesson) => !isMaterialLesson(lesson))
   const numberedLessonIds = [...visibleLessons]
+    .filter((lesson) => !isMaterialLesson(lesson))
     .sort((a, b) => lessonToUnix(a) - lessonToUnix(b))
     .reduce((acc, lesson, index) => {
       acc[lesson.id] = index + 1
@@ -161,7 +183,7 @@ export default function StudentDashboard() {
       </header>
 
       <main className="app-main">
-        <section className="hero-panel">
+        <section className="hero-panel student-hero-panel">
           <div>
             <p className="eyebrow">Panel ucznia</p>
             <h1 className="page-title">Cześć, {studentFirstName}!</h1>
@@ -197,8 +219,19 @@ export default function StudentDashboard() {
           </div>
         </div>
 
-        <div className="section-bar">
-          <h2 className="section-title">Moje lekcje</h2>
+        <div style={s.studyTabs}>
+          <button
+            style={activeStudyTab === 'lessons' ? s.studyTabActive : s.studyTab}
+            onClick={() => setActiveStudyTab('lessons')}
+          >
+            Moje lekcje
+          </button>
+          <button
+            style={activeStudyTab === 'materials' ? s.studyTabActive : s.studyTab}
+            onClick={() => setActiveStudyTab('materials')}
+          >
+            Materiały dodatkowe
+          </button>
         </div>
 
         {loading ? (
@@ -210,7 +243,7 @@ export default function StudentDashboard() {
               <div className="loading-line w-70" />
             </div>
           </div>
-        ) : visibleLessons.length === 0 ? (
+        ) : activeStudyTab === 'lessons' && lessonRows.length === 0 ? (
           <div className="ui-card">
             <IllustrationState
               type="noLessons"
@@ -218,9 +251,9 @@ export default function StudentDashboard() {
               text="Gdy nauczyciel doda lekcję do Twojej klasy, pojawi się tutaj karta z postępem."
             />
           </div>
-        ) : (
+        ) : activeStudyTab === 'lessons' ? (
           <div className="stack-list">
-            {visibleLessons.map(lesson => {
+            {lessonRows.map(lesson => {
               const task = taskByLessonId[lesson.id]
               const lessonNumber = numberedLessonIds[lesson.id] ?? 1
               const displayTitle = formatDisplayTitle(lesson?.title, lessonNumber)
@@ -296,6 +329,46 @@ export default function StudentDashboard() {
               )
             })}
           </div>
+        ) : materialRows.length === 0 ? (
+          <div className="ui-card">
+            <IllustrationState
+              type="noLessons"
+              title="Brak materiałów dodatkowych"
+              text="Gdy nauczyciel wrzuci PDF dla klasy, AI przygotuje tu krótką notatkę i opis."
+            />
+          </div>
+        ) : (
+          <div className="stack-list">
+            {materialRows.map((material) => {
+              const displayDate = resolveLessonDate(material)
+              const isProcessing = material.processingStatus === 'processing' || material.status === 'processing'
+              return (
+                <div
+                  key={material.id}
+                  className="ui-card lesson-card"
+                  style={{ cursor: 'pointer', borderLeft: '4px solid #0ea5e9' }}
+                  onClick={() => navigate(`/student/material/${material.id}`)}
+                >
+                  <div className="badge badge-progress" style={{ background: '#e0f2fe', color: '#0369a1' }}>
+                    {isProcessing ? 'AI przygotowuje' : 'Materiał PDF'}
+                  </div>
+                  <div className="card-title" style={{ marginTop: 14 }}>{material.title || material.shortTitle || 'Materiał dodatkowy'}</div>
+                  <div className="card-meta">
+                    {displayDate
+                      ? displayDate.toLocaleDateString('pl-PL', {
+                        day: '2-digit',
+                        month: '2-digit',
+                        year: 'numeric',
+                      })
+                      : '—'}
+                  </div>
+                  <div className="card-meta" style={{ marginTop: 8 }}>
+                    {isProcessing ? 'AI skraca i opisuje materiał z PDF' : (material.description || 'Otwórz notatkę z materiału')}
+                  </div>
+                </div>
+              )
+            })}
+          </div>
         )}
       </main>
     </div>
@@ -304,6 +377,9 @@ export default function StudentDashboard() {
 
 const s = {
   page: { minHeight: '100vh', background: '#f9fafb', fontFamily: 'sans-serif' },
+  studyTabs: { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, margin: '28px 0 16px', background: '#eaf2ff', border: '1px solid #dbeafe', borderRadius: 16, padding: 6 },
+  studyTab: { border: 'none', borderRadius: 12, background: 'transparent', color: '#475569', padding: '12px 14px', cursor: 'pointer', fontWeight: 800, fontSize: 14 },
+  studyTabActive: { border: 'none', borderRadius: 12, background: '#2563eb', color: '#fff', padding: '12px 14px', cursor: 'pointer', fontWeight: 800, fontSize: 14, boxShadow: '0 10px 24px rgba(37,99,235,.24)' },
   header: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '16px 32px', background: '#fff', borderBottom: '1px solid #e5e7eb' },
   logo: { fontSize: 20, fontWeight: 700, color: '#2563eb' },
   logoutBtn: { background: 'none', border: '1px solid #d1d5db', borderRadius: 8, padding: '6px 14px', cursor: 'pointer', fontSize: 14, color: '#6b7280' },

@@ -6,6 +6,14 @@ import Logo from '../components/Logo'
 
 const AuthContext = createContext(null)
 
+function hasPendingPasswordSetup(uid) {
+  try {
+    return window.localStorage.getItem(`eduflow-password-setup:${uid}`) === 'pending'
+  } catch {
+    return false
+  }
+}
+
 export function AuthProvider({ children }) {
   const [user, setUser] = useState(null)
   const [role, setRole] = useState(null)
@@ -16,30 +24,49 @@ export function AuthProvider({ children }) {
 
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
-      if (firebaseUser) {
-        setUser(firebaseUser)
-        const teacherDoc = await getDoc(doc(db, 'teachers', firebaseUser.uid))
-        if (teacherDoc.exists()) {
-          setRole('teacher')
-          setTeacherProfile(teacherDoc.data())
-          setStudentProfile(null)
-          setPasswordSetupRequired(false)
-        } else {
+      try {
+        if (firebaseUser) {
+          setUser(firebaseUser)
+          const teacherDoc = await getDoc(doc(db, 'teachers', firebaseUser.uid))
+          if (teacherDoc.exists()) {
+            setRole('teacher')
+            setTeacherProfile(teacherDoc.data())
+            setStudentProfile(null)
+            setPasswordSetupRequired(false)
+            return
+          }
+
           const studentDoc = await getDoc(doc(db, 'students', firebaseUser.uid))
           const studentData = studentDoc.exists() ? studentDoc.data() : null
+
           setRole('student')
           setTeacherProfile(null)
           setStudentProfile(studentData)
-          setPasswordSetupRequired(studentData?.passwordSet === false)
+          setPasswordSetupRequired(studentData?.passwordSet === false && hasPendingPasswordSetup(firebaseUser.uid))
+          return
         }
-      } else {
+
         setUser(null)
         setRole(null)
         setTeacherProfile(null)
         setStudentProfile(null)
         setPasswordSetupRequired(false)
+      } catch {
+        // Firestore chwilowo niedostepny (np. opóźnienie sieci przy hard refresh).
+        // NIE czyść user — sesja Firebase Auth musi przetrwać.
+        // Jeśli firebaseUser nie istnieje, wtedy zeruj wszystko.
+        if (!firebaseUser) {
+          setUser(null)
+          setRole(null)
+          setTeacherProfile(null)
+          setStudentProfile(null)
+          setPasswordSetupRequired(false)
+        }
+        // Gdy firebaseUser istnieje: user pozostaje ustawiony, role = null.
+        // PrivateRoute obsłuży to bez przekierowania do /login.
+      } finally {
+        setLoading(false)
       }
-      setLoading(false)
     })
     return unsubscribe
   }, [])
