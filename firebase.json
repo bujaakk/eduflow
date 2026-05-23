@@ -5,6 +5,9 @@
   "storage": {
     "rules": "storage.rules"
   },
+  "functions": {
+    "source": "functions"
+  },
   "hosting": {
     "site": "eduflowapp",
     "public": "dist",
@@ -14,6 +17,10 @@
       "**/node_modules/**"
     ],
     "rewrites": [
+      {
+        "source": "/api/invite",
+        "function": "inviteProxyV1"
+      },
       {
         "source": "**",
         "destination": "/index.html"

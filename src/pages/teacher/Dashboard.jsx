@@ -24,6 +24,16 @@ import completedLessonsImg from '../../assets/metric-completed-lessons.png'
 import studentActivityImg from '../../assets/metric-student-activity.png'
 import aiRecommendationsImg from '../../assets/metric-ai-recommendations.png'
 
+const INVITE_WEBHOOK_URL = import.meta.env.VITE_INVITE_WEBHOOK_URL || '/api/invite'
+
+function sendInviteEmail(payload) {
+  fetch(INVITE_WEBHOOK_URL, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  }).catch(() => {})
+}
+
 export default function TeacherDashboard() {
   const { user, teacherProfile } = useAuth()
   const [classes, setClasses] = useState([])
@@ -162,8 +172,9 @@ export default function TeacherDashboard() {
         return
       }
 
+      const selectedClass = classes.find((cls) => cls.id === classId)
       const code = createInviteCode()
-      await addDoc(collection(db, 'invitations'), {
+      const inviteRef = await addDoc(collection(db, 'invitations'), {
         email,
         firstName,
         lastName,
@@ -171,8 +182,24 @@ export default function TeacherDashboard() {
         classId,
         code,
         status: 'pending',
+        emailStatus: 'queued',
+        sendAttempts: 0,
         createdAt: serverTimestamp(),
       })
+
+      sendInviteEmail({
+        studentEmail: email,
+        email,
+        firstName,
+        lastName,
+        classId,
+        className: selectedClass?.name || '',
+        teacherId: user.uid,
+        teacherName: auth.currentUser?.displayName || `${teacherProfile?.firstName || ''} ${teacherProfile?.lastName || ''}`.trim() || 'Nauczyciel',
+        invitationId: inviteRef.id,
+        code,
+      })
+
       setShowStudentModal(false)
       setStudentForm({ firstName: '', lastName: '', email: '', classId: '' })
       await refreshAfterRosterChange()
