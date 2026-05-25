@@ -1,8 +1,48 @@
 # EduFlow
 
+[![Live Demo](https://img.shields.io/badge/Live%20Demo-eduflowapp.web.app-0f766e?style=for-the-badge)](https://eduflowapp.web.app)
+![React](https://img.shields.io/badge/React-18-2563eb?style=for-the-badge&logo=react&logoColor=white)
+![Vite](https://img.shields.io/badge/Vite-5-f59e0b?style=for-the-badge&logo=vite&logoColor=white)
+![Firebase](https://img.shields.io/badge/Firebase-Hosting%20%2B%20Firestore-ef4444?style=for-the-badge&logo=firebase&logoColor=white)
+
 EduFlow to platforma edukacyjna wspierana przez AI, która zamienia lekcję w konkretną pracę dla ucznia. Nauczyciel może nagrać krótkie podsumowanie lekcji albo dodać plik PDF, a system pomaga wygenerować materiały, quizy, feedback oraz widoczność postępów klasy.
 
 Projekt powstał jako prototyp hackathonowy skupiony na ograniczeniu ręcznej pracy nauczyciela po lekcji: przygotowywania notatek, tworzenia zadań, sprawdzania odpowiedzi i kontrolowania, czy uczniowie faktycznie zrozumieli temat.
+
+## Szybki Podgląd
+
+- Live demo: https://eduflowapp.web.app
+- Repozytorium: https://github.com/bujaakk/eduflow
+- Frontend: React + Vite
+- Backend i dane: Firebase Authentication, Firestore, Storage, Hosting
+- AI i automatyzacje: webhooki n8n oraz zewnętrzne usługi AI/STT
+- Status: działający prototyp hackathonowy gotowy do demo
+
+## Pobranie Projektu na Innym Komputerze
+
+Tak, projekt można normalnie pobrać z GitHuba na innym komputerze i dalej edytować.
+
+```bash
+git clone https://github.com/bujaakk/eduflow.git
+cd eduflow
+npm install
+npm run dev
+```
+
+Po uruchomieniu serwera developerskiego Vite pokaże lokalny adres, najczęściej `http://localhost:5173`.
+
+Jeżeli chcesz pracować na danych live albo własnych webhookach AI, utwórz lokalny plik `.env` na podstawie `.env.example`. Tego pliku zwykle nie wypycha się do GitHuba, bo może zawierać prywatną konfigurację.
+
+Typowa praca na drugim komputerze wygląda tak:
+
+```bash
+git pull origin main
+# edycja plików
+npm run build
+git add .
+git commit -m "opis zmiany"
+git push origin main
+```
 
 ## Demo Live
 
