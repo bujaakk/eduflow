@@ -1,0 +1,38 @@
+name: Bug report
+description: Zgłoś błąd w aplikacji EduFlow
+title: "[BUG] "
+labels:
+  - bug
+body:
+  - type: textarea
+    id: description
+    attributes:
+      label: Opis problemu
+      description: Co dokładnie nie działa?
+      placeholder: Opisz objawy i wpływ na użytkownika
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: Kroki reprodukcji
+      placeholder: |
+        1. Wejdź do ...
+        2. Kliknij ...
+        3. Zobacz błąd ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Oczekiwane zachowanie
+    validations:
+      required: true
+
+  - type: textarea
+    id: env
+    attributes:
+      label: Środowisko
+      placeholder: Przeglądarka, urządzenie, rola użytkownika, environmentSlug

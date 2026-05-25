@@ -1,0 +1,36 @@
+name: Feature request
+description: Zaproponuj funkcję produktu lub usprawnienie UX
+title: "[FEATURE] "
+labels:
+  - enhancement
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem użytkownika
+      description: Jaki realny problem rozwiązujemy?
+      placeholder: Jako nauczyciel/uczeń/admin chcę...
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proponowane rozwiązanie
+      placeholder: Opisz proponowaną funkcję i przebieg UX
+    validations:
+      required: true
+
+  - type: textarea
+    id: value
+    attributes:
+      label: Wartość biznesowa
+      placeholder: Jak to poprawi wyniki nauki, czas pracy lub jakość produktu?
+
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Kryteria akceptacji
+      placeholder: |
+        - [ ] ...
+        - [ ] ...
