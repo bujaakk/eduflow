@@ -18,31 +18,27 @@ Projekt powstał jako prototyp hackathonowy skupiony na ograniczeniu ręcznej pr
 - AI i automatyzacje: webhooki n8n oraz zewnętrzne usługi AI/STT
 - Status: działający prototyp hackathonowy gotowy do demo
 
-## Pobranie Projektu na Innym Komputerze
+## Opis Aplikacji dla Klientów
 
-Tak, projekt można normalnie pobrać z GitHuba na innym komputerze i dalej edytować.
+EduFlow to aplikacja wspierająca szkoły i nauczycieli w codziennej pracy po lekcji.
 
-```bash
-git clone https://github.com/bujaakk/eduflow.git
-cd eduflow
-npm install
-npm run dev
-```
+Najkrócej: nauczyciel tworzy podsumowanie lekcji (głosowo lub z PDF), a EduFlow pomaga zamienić je w praktyczne materiały dla uczniów, zadania i szybki feedback.
 
-Po uruchomieniu serwera developerskiego Vite pokaże lokalny adres, najczęściej `http://localhost:5173`.
+### Co pokazujemy podczas prezentacji
 
-Jeżeli chcesz pracować na danych live albo własnych webhookach AI, utwórz lokalny plik `.env` na podstawie `.env.example`. Tego pliku zwykle nie wypycha się do GitHuba, bo może zawierać prywatną konfigurację.
+1. Nauczyciel nagrywa krótkie podsumowanie lekcji lub dodaje materiał PDF.
+2. System generuje treści edukacyjne i zadania dla uczniów.
+3. Uczniowie wykonują zadania i od razu otrzymują informację zwrotną.
+4. Nauczyciel widzi postęp klasy i szybciej podejmuje decyzje, co powtórzyć.
 
-Typowa praca na drugim komputerze wygląda tak:
+### Główna wartość biznesowa
 
-```bash
-git pull origin main
-# edycja plików
-npm run build
-git add .
-git commit -m "opis zmiany"
-git push origin main
-```
+- mniej czasu na ręczne przygotowywanie materiałów po lekcji,
+- szybsze domknięcie pętli nauki nauczyciel -> uczeń -> feedback,
+- większa przejrzystość postępów uczniów,
+- możliwość wdrożenia w środowiskach demo i docelowo w wielu szkołach.
+
+EduFlow jest prezentowany jako produkt edukacyjny do rozmów z klientami, partnerami i szkołami.
 
 ## Demo Live
 
