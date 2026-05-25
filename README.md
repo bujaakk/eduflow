@@ -1,90 +1,90 @@
 # EduFlow
 
-EduFlow is an AI-assisted learning platform that turns a lesson into concrete follow-up work for students. A teacher can record a short lesson summary or upload a PDF, and the system helps generate learning materials, quizzes, feedback, and progress visibility for the class.
+EduFlow to platforma edukacyjna wspierana przez AI, która zamienia lekcję w konkretną pracę dla ucznia. Nauczyciel może nagrać krótkie podsumowanie lekcji albo dodać plik PDF, a system pomaga wygenerować materiały, quizy, feedback oraz widoczność postępów klasy.
 
-The project was built as a hackathon prototype focused on reducing the manual work teachers do after lessons: preparing notes, creating tasks, checking answers, and tracking whether students actually understood the topic.
+Projekt powstał jako prototyp hackathonowy skupiony na ograniczeniu ręcznej pracy nauczyciela po lekcji: przygotowywania notatek, tworzenia zadań, sprawdzania odpowiedzi i kontrolowania, czy uczniowie faktycznie zrozumieli temat.
 
-## Live Demo
+## Demo Live
 
-Production app:
+Aplikacja produkcyjna:
 
 https://eduflowapp.web.app
 
-Repository:
+Repozytorium:
 
 https://github.com/bujaakk/eduflow
 
-## What Problem Does EduFlow Solve?
+## Jaki Problem Rozwiązuje EduFlow?
 
-After a lesson, teachers often do not have a fast way to know:
+Po lekcji nauczyciel często nie ma szybkiego sposobu, aby sprawdzić:
 
-- which students understood the topic,
-- which students need more practice,
-- what should be repeated in the next lesson,
-- how to create useful follow-up materials without spending extra hours after class.
+- którzy uczniowie zrozumieli temat,
+- którzy uczniowie potrzebują więcej ćwiczeń,
+- co warto powtórzyć na kolejnej lekcji,
+- jak przygotować sensowne materiały po lekcji bez spędzania dodatkowych godzin przy komputerze.
 
-Students also often lack immediate feedback. They may complete work, but they do not instantly know what was correct, what needs improvement, or where to review the lesson content.
+Uczniowie również często nie dostają natychmiastowego feedbacku. Mogą wykonać zadanie, ale nie wiedzą od razu, co było poprawne, co wymaga poprawy i gdzie wrócić do materiału.
 
-EduFlow closes this loop by connecting the teacher, student, lesson content, and AI-generated support in one workflow.
+EduFlow zamyka tę pętlę, łącząc nauczyciela, ucznia, materiał lekcyjny i wsparcie AI w jednym przepływie pracy.
 
-## Core Idea
+## Główna Idea
 
-EduFlow follows a simple learning loop:
+EduFlow opiera się na prostej pętli nauki:
 
-1. The teacher creates or records lesson content.
-2. AI helps transform it into useful student materials.
-3. The student completes tasks and receives feedback.
-4. The teacher sees progress and can react faster.
+1. Nauczyciel tworzy lub nagrywa materiał z lekcji.
+2. AI pomaga zamienić go w materiały dla ucznia.
+3. Uczeń wykonuje zadania i otrzymuje feedback.
+4. Nauczyciel widzi postęp i może szybciej reagować.
 
-The goal is not to replace the teacher. The goal is to give the teacher more time for actual teaching by reducing repetitive work after lessons.
+Celem nie jest zastąpienie nauczyciela. Celem jest oddanie nauczycielowi czasu na realne uczenie poprzez ograniczenie powtarzalnej pracy po lekcji.
 
-## Main Features
+## Najważniejsze Funkcje
 
-### Teacher Panel
+### Panel Nauczyciela
 
-The teacher can:
+Nauczyciel może:
 
-- view assigned classes,
-- manage students in a class,
-- record a lesson summary,
-- use a QR flow to record audio from a phone,
-- review generated transcription before sending it for processing,
-- view created lessons,
-- inspect student progress,
-- review lesson/task completion status.
+- przeglądać przypisane klasy,
+- zarządzać uczniami w klasie,
+- nagrać podsumowanie lekcji,
+- użyć przepływu QR do nagrywania audio telefonem,
+- sprawdzić transkrypcję przed wysłaniem jej do przetwarzania,
+- przeglądać utworzone lekcje,
+- sprawdzać postępy uczniów,
+- kontrolować status ukończenia lekcji i zadań.
 
-### Mobile Recording via QR
+### Nagrywanie Telefonem Przez QR
 
-If recording on the computer is inconvenient, the teacher can generate a QR code. The phone opens a mobile recording page where the teacher can record or upload audio. The desktop view receives the uploaded recording and continues the lesson processing flow.
+Jeżeli nagrywanie na komputerze jest niewygodne, nauczyciel może wygenerować kod QR. Telefon otwiera mobilną stronę nagrywania, na której można nagrać lub wgrać audio. Widok na komputerze odbiera przesłane nagranie i kontynuuje proces tworzenia lekcji.
 
-This is useful in real classrooms where the teacher's laptop microphone may not be good enough or may not be available.
+To rozwiązanie jest przydatne w prawdziwej klasie, gdzie mikrofon laptopa może być słaby albo niedostępny.
 
-### Student Panel
+### Panel Ucznia
 
-The student can:
+Uczeń może:
 
-- see assigned lessons and their statuses,
-- complete quiz-style lesson tasks,
-- receive feedback after answering,
-- unlock lesson notes after completing required work,
-- view additional materials,
-- check profile/progress information.
+- zobaczyć przypisane lekcje i ich statusy,
+- rozwiązywać zadania w formie quizu,
+- otrzymywać feedback po odpowiedzi,
+- odblokować notatkę po wykonaniu wymaganej pracy,
+- przeglądać dodatkowe materiały,
+- sprawdzać profil i informacje o postępach.
 
-### Admin Panel
+### Panel Administratora
 
-The admin panel is used to prepare the school structure:
+Panel administratora służy do przygotowania struktury szkoły lub środowiska:
 
-- manage environments,
-- create or manage users,
-- assign roles,
-- create teachers/students,
-- connect users with classes.
+- zarządzania środowiskami,
+- tworzenia i obsługi użytkowników,
+- przypisywania ról,
+- tworzenia nauczycieli i uczniów,
+- łączenia użytkowników z klasami.
 
-The admin panel is supporting infrastructure. The primary product experience is the teacher-student learning flow.
+Panel administratora jest częścią infrastruktury. Główne doświadczenie produktu to przepływ nauczyciel-uczeń.
 
-### Multi-Environment Support
+### Obsługa Wielu Środowisk
 
-EduFlow supports environment-specific routing using paths such as:
+EduFlow obsługuje routing zależny od środowiska, np.:
 
 ```text
 /e/:environmentSlug/login
@@ -92,69 +92,69 @@ EduFlow supports environment-specific routing using paths such as:
 /e/:environmentSlug/student
 ```
 
-This allows separate school or demo environments to exist inside the same app deployment.
+Dzięki temu osobne szkoły lub środowiska demo mogą działać w ramach jednej wdrożonej aplikacji.
 
-## AI Features
+## Funkcje AI
 
-EduFlow uses AI-assisted workflows through external webhook integrations. The exact model/workflow can be changed behind the webhook layer, but the product value stays the same: less manual work and faster feedback.
+EduFlow korzysta z przepływów AI przez zewnętrzne integracje webhookowe. Konkretny model lub workflow może zostać zmieniony za warstwą webhooków, ale wartość produktu pozostaje taka sama: mniej ręcznej pracy i szybszy feedback.
 
-### 1. Lesson Audio Processing
+### 1. Przetwarzanie Nagrania Lekcji
 
-Teacher audio is sent to an audio webhook. The workflow is designed to turn a recording into lesson content, including transcription and structured materials.
+Audio nauczyciela jest wysyłane do webhooka audio. Workflow ma za zadanie zamienić nagranie w treść lekcji, w tym transkrypcję i uporządkowane materiały.
 
-User value:
+Wartość dla użytkownika:
 
-> No more manually writing notes after every lesson.
+> Koniec z ręcznym pisaniem notatek po każdej lekcji.
 
-### 2. Quiz and Task Generation
+### 2. Generowanie Quizów i Zadań
 
-Lesson content can be transformed into tasks for students. The teacher can use this as a starting point instead of creating exercises from scratch.
+Treść lekcji może zostać przekształcona w zadania dla uczniów. Nauczyciel dostaje punkt startowy zamiast tworzyć ćwiczenia od zera.
 
-User value:
+Wartość dla użytkownika:
 
-> One lesson summary becomes student work automatically.
+> Jedno podsumowanie lekcji automatycznie zamienia się w pracę dla ucznia.
 
-### 3. Answer Evaluation
+### 3. Ocenianie Odpowiedzi
 
-Student quiz answers can be evaluated automatically, allowing faster feedback and a smoother learning loop.
+Odpowiedzi uczniów w quizie mogą być oceniane automatycznie, co pozwala szybciej domknąć pętlę nauki.
 
-User value:
+Wartość dla użytkownika:
 
-> Students get feedback immediately instead of waiting days.
+> Uczeń dostaje feedback od razu, zamiast czekać kilka dni.
 
-### 4. Exercise Checking
+### 4. Sprawdzanie Ćwiczeń
 
-The application is designed around AI-supported checking of student exercises and learning tasks.
+Aplikacja została zaprojektowana wokół wspieranego przez AI sprawdzania ćwiczeń i zadań uczniów.
 
-User value:
+Wartość dla użytkownika:
 
-> The teacher does not need to manually check every repetitive answer.
+> Nauczyciel nie musi ręcznie sprawdzać każdej powtarzalnej odpowiedzi.
 
-### 5. Lesson Chatbot
+### 5. Chatbot Lekcji
 
-The product direction includes lesson-context help for students: instead of searching the open internet, the student can ask questions about the material connected to the lesson.
+Kierunek produktu obejmuje pomoc kontekstową dla ucznia: zamiast szukać przypadkowych odpowiedzi w internecie, uczeń może zadawać pytania dotyczące konkretnej lekcji.
 
-User value:
+Wartość dla użytkownika:
 
-> Students can ask follow-up questions when the teacher is not next to them.
+> Uczeń może dopytać o materiał, gdy nauczyciela nie ma obok.
 
-### 6. PDF to Learning Material
+### 6. PDF do Materiału Edukacyjnego
 
-Teachers can upload a PDF and send it to a PDF material webhook. The workflow can produce student-friendly learning material from an existing document.
+Nauczyciel może wgrać PDF i wysłać go do webhooka materiałów PDF. Workflow może stworzyć z istniejącego dokumentu czytelny materiał dla ucznia.
 
-User value:
+Wartość dla użytkownika:
 
-> Old PDFs become readable, structured learning materials.
+> Stare PDF-y stają się uporządkowanymi, czytelnymi materiałami do nauki.
 
-### 7. Student Invitations
+### 7. Zaproszenia Uczniów
 
-EduFlow includes invitation/onboarding flows for students. This helps teachers and admins start a class faster.
+EduFlow zawiera przepływy zapraszania i onboardingu uczniów. Pomaga to nauczycielom i administratorom szybciej uruchomić klasę.
 
-User value:
+Wartość dla użytkownika:
 
-> A class can be onboarded without manual account setup for every student.
+> Klasę można uruchomić bez ręcznego zakładania kont każdemu uczniowi.
 
-## Tech Stack
+## Stack Technologiczny
 
 Frontend:
 
@@ -165,50 +165,50 @@ Frontend:
 - React Markdown
 - Lucide React icons
 
-Backend and infrastructure:
+Backend i infrastruktura:
 
 - Firebase Authentication
 - Cloud Firestore
 - Firebase Storage
 - Firebase Hosting
-- Firebase Cloud Functions for selected proxy flows
+- Firebase Cloud Functions dla wybranych przepływów proxy
 
-AI and automation integrations:
+Integracje AI i automatyzacji:
 
-- n8n webhook workflows
-- external AI/STT services behind webhook endpoints
+- workflowy webhookowe n8n
+- zewnętrzne usługi AI/STT za endpointami webhooków
 
-Analytics:
+Analityka:
 
-- Amplitude Unified SDK, optional and controlled by environment variables
+- Amplitude Unified SDK, opcjonalnie i przez zmienne środowiskowe
 
 PWA:
 
 - Vite PWA plugin
-- generated service worker and manifest
+- generowany service worker i manifest
 
-## Project Structure
+## Struktura Projektu
 
 ```text
 EduFlow/
   functions/              Firebase Cloud Functions
-  public/                 Public static assets and PWA icons
-  scripts/                Utility scripts, including auto backup
+  public/                 publiczne assety statyczne i ikony PWA
+  scripts/                skrypty pomocnicze, w tym auto backup
   src/
-    assets/               Design assets and typography
-    components/           Shared UI components
-    contexts/             Auth and environment contexts
-    pages/                App pages grouped by role
-      student/            Student dashboard, tasks, notes, materials, profile
-      teacher/            Teacher dashboard, classes, recording, lessons, profiles
-    services/             Webhook upload and analytics services
-    utils/                Shared utility logic
-  zadania/                Hackathon planning/task notes
+    assets/               assety graficzne i typografia
+    components/           współdzielone komponenty UI
+    contexts/             konteksty autoryzacji i środowisk
+    pages/                strony aplikacji podzielone według ról
+      student/            dashboard ucznia, zadania, notatki, materiały, profil
+      teacher/            dashboard nauczyciela, klasy, nagrania, lekcje, profile
+    services/             upload webhooków i analityka
+    utils/                współdzielona logika pomocnicza
+  zadania/                notatki i plany z hackathonu
 ```
 
-## Important Routes
+## Ważne Ścieżki
 
-Public/auth routes:
+Ścieżki publiczne i autoryzacyjne:
 
 ```text
 /login
@@ -216,7 +216,7 @@ Public/auth routes:
 /admin
 ```
 
-Teacher routes:
+Ścieżki nauczyciela:
 
 ```text
 /teacher
@@ -228,7 +228,7 @@ Teacher routes:
 /teacher/student/:studentId
 ```
 
-Environment-prefixed teacher routes:
+Ścieżki nauczyciela z prefiksem środowiska:
 
 ```text
 /e/:environmentSlug/teacher
@@ -240,7 +240,7 @@ Environment-prefixed teacher routes:
 /e/:environmentSlug/teacher/student/:studentId
 ```
 
-Student routes:
+Ścieżki ucznia:
 
 ```text
 /student
@@ -250,7 +250,7 @@ Student routes:
 /student/profile
 ```
 
-Environment-prefixed student routes:
+Ścieżki ucznia z prefiksem środowiska:
 
 ```text
 /e/:environmentSlug/student
@@ -260,9 +260,9 @@ Environment-prefixed student routes:
 /e/:environmentSlug/student/profile
 ```
 
-## Environment Variables
+## Zmienne Środowiskowe
 
-Create a local `.env` file based on `.env.example` if you need custom webhook or analytics configuration.
+Jeżeli potrzebujesz własnej konfiguracji webhooków lub analityki, utwórz lokalny plik `.env` na podstawie `.env.example`.
 
 ```env
 VITE_AUDIO_WEBHOOK_URL=https://n8n.yourwayai.pl/webhook/eduflow-audio
@@ -273,73 +273,73 @@ VITE_AMPLITUDE_DASHBOARD_URL=
 VITE_AMPLITUDE_EMBED_URL=
 ```
 
-Additional optional analytics setting:
+Dodatkowa opcjonalna konfiguracja analityki:
 
 ```env
 VITE_AMPLITUDE_SESSION_REPLAY_SAMPLE_RATE=0
 ```
 
-Session replay is disabled by default for demo stability and cleaner browser console output.
+Session replay jest domyślnie wyłączony, żeby demo było stabilniejsze, a konsola przeglądarki czystsza.
 
-## Audio Upload Notes
+## Uwagi Dotyczące Uploadu Audio
 
-Desktop recording uses `MediaRecorder`. For compatibility with STT/Whisper-style workflows, the app prefers `audio/mp4` when supported and normalizes WebM recordings to plain `audio/webm` instead of `audio/webm;codecs=opus`.
+Nagrywanie na desktopie używa `MediaRecorder`. Dla kompatybilności z workflowami STT/Whisper aplikacja preferuje `audio/mp4`, jeśli przeglądarka je obsługuje, i normalizuje nagrania WebM do czystego `audio/webm` zamiast `audio/webm;codecs=opus`.
 
-The audio webhook expects either:
+Webhook audio oczekuje jednej z dwóch form:
 
-- binary multipart data under the `data` field, or
-- a remote `audioUrl` for mobile QR recordings.
+- binarnych danych multipart w polu `data`, albo
+- zdalnego `audioUrl` dla nagrań przesłanych przez QR z telefonu.
 
-This distinction is important for n8n workflows that read binary fields by name.
+To rozróżnienie jest ważne dla workflowów n8n, które odczytują pola binarne po nazwie.
 
-## PDF Material Upload Notes
+## Uwagi Dotyczące Uploadu PDF
 
-PDF upload sends the original PDF file plus metadata to the PDF material webhook. The workflow receives class and teacher context and can create either a lesson-style material or additional student material.
+Upload PDF wysyła oryginalny plik PDF oraz metadane do webhooka materiałów PDF. Workflow otrzymuje kontekst klasy i nauczyciela, a następnie może utworzyć materiał w formie lekcji albo dodatkowy materiał dla ucznia.
 
-## Getting Started Locally
+## Uruchomienie Lokalnie
 
-### Prerequisites
+### Wymagania
 
-- Node.js 18 or newer recommended
+- zalecany Node.js 18 lub nowszy
 - npm
-- Firebase project access if using live data/deploy
+- dostęp do projektu Firebase, jeżeli używasz danych live lub deployu
 
-### Install Dependencies
+### Instalacja Zależności
 
 ```bash
 npm install
 ```
 
-### Run Development Server
+### Uruchomienie Serwera Developerskiego
 
 ```bash
 npm run dev
 ```
 
-### Build Production Bundle
+### Build Produkcyjny
 
 ```bash
 npm run build
 ```
 
-### Preview Production Build
+### Podgląd Buildu Produkcyjnego
 
 ```bash
 npm run preview
 ```
 
-## Firebase Deployment
+## Deploy na Firebase
 
-The app is deployed to Firebase Hosting.
+Aplikacja jest wdrażana na Firebase Hosting.
 
-Typical deployment flow:
+Typowy przepływ deployu:
 
 ```bash
 npm run build
 firebase deploy --only hosting
 ```
 
-Firebase configuration files included in the repository:
+Pliki konfiguracyjne Firebase obecne w repozytorium:
 
 ```text
 firebase.json
@@ -349,59 +349,59 @@ functions/package.json
 functions/index.js
 ```
 
-## Demo Flow
+## Flow Demo
 
-A strong 3-minute demo can follow this structure:
+Mocne 3-minutowe demo może wyglądać tak:
 
-1. Problem: teachers lose time after lessons creating notes, tasks, and checking understanding.
-2. User: teacher first, student second, parent as roadmap.
-3. Solution: one lesson summary becomes student work and teacher insight.
-4. AI value: less manual work, faster feedback, better follow-up.
-5. Teacher demo: class dashboard, lesson recording, QR mobile recording, transcription approval.
-6. Student demo: lesson list, task completion, feedback, unlocked notes.
-7. Materials demo: PDF transformed into learning material.
-8. Next steps: parent panel, mobile app, integrations with school systems, deeper analytics.
+1. Problem: nauczyciele tracą czas po lekcjach na tworzenie notatek, zadań i sprawdzanie zrozumienia.
+2. Użytkownik: najpierw nauczyciel, potem uczeń, rodzic jako roadmapa.
+3. Rozwiązanie: jedno podsumowanie lekcji zamienia się w pracę ucznia i wgląd dla nauczyciela.
+4. Wartość AI: mniej ręcznej pracy, szybszy feedback, lepsza kontynuacja nauki po lekcji.
+5. Demo nauczyciela: dashboard klasy, nagrywanie lekcji, QR do telefonu, akceptacja transkrypcji.
+6. Demo ucznia: lista lekcji, wykonanie zadania, feedback, odblokowana notatka.
+7. Demo materiałów: PDF zamieniony w materiał do nauki.
+8. Następne kroki: panel rodzica, aplikacja mobilna, integracje ze szkołami, głębsza analityka.
 
-Sales-oriented messages for the demo:
+Sprzedażowe hasła do demo:
 
-- `No more manual notes after every lesson.`
-- `Students get feedback immediately.`
-- `Old PDFs become interactive learning materials.`
-- `The teacher sees progress before the class moves on.`
-- `AI does not replace the teacher. It gives the teacher time back.`
+- `Koniec z ręcznym robieniem notatek po każdej lekcji.`
+- `Uczeń dostaje feedback od razu.`
+- `Stare PDF-y stają się interaktywnymi materiałami.`
+- `Nauczyciel widzi postęp, zanim klasa pójdzie dalej.`
+- `AI nie zastępuje nauczyciela. AI oddaje nauczycielowi czas.`
 
-## Current Prototype Scope
+## Aktualny Zakres Prototypu
 
-EduFlow is a working hackathon prototype. The current app demonstrates:
+EduFlow jest działającym prototypem hackathonowym. Obecna aplikacja pokazuje:
 
-- role-based auth,
-- teacher and student dashboards,
-- class/student management,
-- lesson recording flow,
-- mobile QR recording flow,
-- AI webhook integration points,
-- student task flow,
-- material viewing,
-- multi-environment routing,
-- Firebase-backed persistence.
+- autoryzację opartą o role,
+- dashboard nauczyciela i ucznia,
+- zarządzanie klasami i uczniami,
+- przepływ nagrywania lekcji,
+- mobilny przepływ nagrywania przez QR,
+- punkty integracji z webhookami AI,
+- przepływ zadań ucznia,
+- przeglądanie materiałów,
+- routing wielu środowisk,
+- trwałość danych opartą o Firebase.
 
-Some AI behavior depends on external n8n workflows and the availability/configuration of the connected AI services.
+Część zachowań AI zależy od zewnętrznych workflowów n8n oraz dostępności i konfiguracji podłączonych usług AI.
 
-## Roadmap
+## Roadmapa
 
-Planned improvements after the hackathon:
+Planowane usprawnienia po hackathonie:
 
-- parent dashboard with student progress visibility,
-- dedicated student mobile app,
-- integrations with school systems such as Librus or Vulcan,
-- deeper class analytics and recommendations,
-- richer teacher editing tools for generated tasks and notes,
-- stronger observability for AI workflow failures,
-- automated end-to-end tests for the teacher-student demo path.
+- panel rodzica z widocznością postępów ucznia,
+- dedykowana aplikacja mobilna dla ucznia,
+- integracje z dziennikami, takimi jak Librus lub Vulcan,
+- głębsza analityka klasy i rekomendacje,
+- bogatsze narzędzia edycji wygenerowanych zadań i notatek dla nauczyciela,
+- lepsza obserwowalność błędów workflowów AI,
+- automatyczne testy end-to-end dla ścieżki demo nauczyciel-uczeń.
 
-## Repository Status
+## Status Repozytorium
 
-Main branch:
+Główna gałąź:
 
 ```text
 main
@@ -413,6 +413,6 @@ Remote:
 origin https://github.com/bujaakk/eduflow.git
 ```
 
-## License
+## Licencja
 
-No explicit license has been added yet. Add one before public or commercial distribution.
+Projekt nie ma jeszcze jawnie dodanej licencji. Przed publiczną lub komercyjną dystrybucją należy ją dodać.
